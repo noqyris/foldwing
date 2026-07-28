@@ -1,0 +1,125 @@
+# Foldwing — iOS release automation (Capacitor + fastlane).
+#
+# Auth is an App Store Connect API key, so no Apple-ID password or 2FA prompt.
+# Set ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH, APPLE_ID, APPLE_TEAM_ID — see
+# .env.appstore.example. Run from the project root:
+#
+#   npm run ios:sync            # web build + cap sync FIRST (see below)
+#   fastlane verify             # does the API key work, does the app exist
+#   fastlane setup_app          # create the App Store Connect record
+#   fastlane beta               # archive + upload to TestFlight
+#
+# The web build and `cap sync` deliberately run in the shell BEFORE fastlane:
+# CocoaPods misbehaves under fastlane's bundled Ruby, and forgetting the sync
+# is the classic way to ship the previous build's UI inside a new binary.
+default_platform(:ios)
+
+WORKSPACE = "ios/App/App.xcworkspace"
+SCHEME    = "App"
+APP_ID    = "com.noqyris.foldwing"
+TEAM      = "YMN45WC2QR"
+
+def asc_key
+  app_store_connect_api_key(
+    key_id: ENV.fetch("ASC_KEY_ID"),
+    issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+    key_filepath: ENV.fetch("ASC_KEY_PATH"),
+    in_house: false
+  )
+end
+
+platform :ios do
+  desc "Verify API-key auth and whether the app record exists"
+  lane :verify do
+    key = asc_key
+    begin
+      n = latest_testflight_build_number(
+        api_key: key, app_identifier: APP_ID, initial_build_number: 0
+      )
+      UI.success("AUTH OK — app exists. latest TestFlight build = #{n}")
+    rescue => e
+      UI.important("AUTH OK — but app lookup said: #{e.message}")
+    end
+  end
+
+  desc "Create the App Store Connect app record if missing"
+  # `produce` in this fastlane version has no api_key option. Calling asc_key
+  # first still authenticates it: the action installs the token into
+  # Spaceship::ConnectAPI globally, which produce then picks up — so this works
+  # with the API key and never prompts for an Apple ID password or 2FA.
+  lane :setup_app do
+    asc_key
+    # The App Store listing name must be globally unique and plain "Foldwing"
+    # is already taken by someone else. This only affects the store listing —
+    # CFBundleDisplayName is still "Foldwing", so the home-screen icon and the
+    # in-game wordmark are unchanged. Rename in App Store Connect any time
+    # before submission if you find something better.
+    produce(
+      app_identifier: APP_ID,
+      app_name: "Foldwing: Mirror Puzzle",
+      language: "English",
+      app_version: "1.0",
+      sku: "foldwing",
+      company_name: "Djordje Subotic",
+      team_id: TEAM
+    )
+  end
+
+  desc "Archive a signed App Store build"
+  lane :build_ipa do
+    key = asc_key
+    # Always land above whatever App Store Connect already has: a duplicate
+    # build number is rejected after the upload has already been paid for.
+    latest = latest_testflight_build_number(api_key: key, app_identifier: APP_ID) rescue 0
+    increment_build_number(
+      xcodeproj: "ios/App/App.xcodeproj", build_number: latest.to_i + 1
+    )
+
+    # Fetch (or create) the App Store profile through the ASC API, then sign
+    # MANUALLY against it.
+    #
+    # Automatic signing fails here with "Cloud signing permission error / No
+    # profiles for com.noqyris.foldwing were found": Xcode's cloud signing needs
+    # rights on the API key that this one does not have. Spaceship talks to the
+    # Developer Portal over a different path and can create the profile fine, so
+    # sigh gets it and the export just uses it. No browser, no Xcode UI.
+    profile = get_provisioning_profile(
+      api_key: key,
+      app_identifier: APP_ID,
+      development: false,
+      readonly: false
+    )
+    UI.message("signing with profile: #{profile}")
+
+    build_app(
+      workspace: WORKSPACE,
+      scheme: SCHEME,
+      export_method: "app-store",
+      output_directory: "build",
+      output_name: "Foldwing.ipa",
+      xcargs: "-allowProvisioningUpdates",
+      export_options: {
+        signingStyle: "manual",
+        teamID: TEAM,
+        provisioningProfiles: { APP_ID => profile }
+      }
+    )
+  end
+
+  desc "Build and upload to TestFlight"
+  lane :beta do
+    build_ipa
+    upload_to_testflight(api_key: asc_key, skip_waiting_for_build_processing: true)
+  end
+
+  desc "Re-upload the ipa already in build/ without rebuilding"
+  # Apple's uploader returns a 500 often enough to matter, and rebuilding would
+  # burn another build number for a transfer that never reached them.
+  lane :beta_upload do
+    upload_to_testflight(
+      api_key: asc_key,
+      ipa: "build/Foldwing.ipa",
+      skip_waiting_for_build_processing: true
+    )
+  end
+end

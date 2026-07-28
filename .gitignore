@@ -1,0 +1,28 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# Capacitor / native shells
+ios/App/Pods/
+ios/App/App/public/
+ios/App/output/
+ios/App/build/
+ios/DerivedData/
+ios/App/App/capacitor.config.json
+ios/capacitor-cordova-ios-plugins/
+android/app/build/
+android/build/
+android/.gradle/
+
+# build artefacts
+.build/
+scratch_*.ts
+
+# App Store / fastlane
+.env.appstore
+build/
+fastlane/report.xml
+fastlane/Preview.html
+*.p8
+*.mobileprovision

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="theme-color" content="#E9EBE4" />
+    <title>Foldwing</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23E9EBE4'/%3E%3Cpath d='M16 27C16 27 6 21 6 13a5 5 0 0 1 10-2 5 5 0 0 1 10 2c0 8-10 14-10 14z' fill='%2316323C'/%3E%3C/svg%3E"
+    />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        /* Paper bleeds to the screen edge so FIT letterboxing is invisible. */
+        background: #e9ebe4;
+        overflow: hidden;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: none;
+        overscroll-behavior: none;
+      }
+      /*
+       * Lock the whole surface to the visual viewport. On a real iOS device a
+       * scrollable / rubber-banding webview shifts the canvas bounding rect that
+       * Phaser caches for input, so touches land offset from the visuals. This
+       * game is nothing but pointer accuracy, so that offset would be fatal:
+       * position:fixed + inset:0 removes every axis of scroll and keeps the
+       * canvas rect and the pointer transform in permanent agreement.
+       */
+      html,
+      body,
+      #app {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: 100%;
+        height: 100%;
+      }
+      canvas {
+        display: block;
+        touch-action: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

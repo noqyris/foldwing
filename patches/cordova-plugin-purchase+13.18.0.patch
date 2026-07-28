@@ -1,0 +1,27 @@
+diff --git a/node_modules/cordova-plugin-purchase/src/ios/InAppPurchase.m b/node_modules/cordova-plugin-purchase/src/ios/InAppPurchase.m
+index 9775405..e61dffb 100644
+--- a/node_modules/cordova-plugin-purchase/src/ios/InAppPurchase.m
++++ b/node_modules/cordova-plugin-purchase/src/ios/InAppPurchase.m
+@@ -288,7 +288,21 @@ static NSString *toTimestamp(NSDate *date) {
+             return;
+         }
+     }
+-    [self _ensureInitialized];
++    // FOLDWING PATCH: do not touch StoreKit at app launch.
++    //
++    // addTransactionObserver makes StoreKit attach a storefront listener, which
++    // needs an Apple Account. On a signed-out device that puts up a "Sign in to
++    // Apple Account" dialog over the app before the user has touched anything,
++    // and it REAPPEARS after Cancel — a repeating login wall on first run of a
++    // free game, caused by a purchase nobody asked for. Verified on a clean
++    // simulator.
++    //
++    // The observer is still registered, just later: -setup: calls
++    // _ensureInitialized, and JS store.initialize() invokes it. Foldwing calls
++    // that only when the player actually opens the purchase or restore flow.
++    // The plugin already supports this path (it is the SK2 stand-down route),
++    // so nothing here is new behaviour, only a later trigger.
++    NSLog(@"[CdvPurchase.AppleAppStore.objc] Deferring init until setup: (Foldwing patch).");
+ }
+ 
+ // Reset the plugin state
