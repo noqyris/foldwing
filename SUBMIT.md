@@ -71,7 +71,10 @@ The tree is currently on **LIVE** units — this is the submission state.
 | build | units | for |
 |---|---|---|
 | 10 | TEST | judging placement and frequency; ads actually render |
-| 11 | LIVE | submission |
+| 11 | LIVE | shipped in the 1.0 that is READY_FOR_SALE |
+| 12 | LIVE | attached to the 1.1 review submission (100 hardened levels) |
+| 13 | LIVE | the 300-bar-level set + menu fix — TestFlight |
+| 14 | TEST | the MAZE set — TestFlight only, so the tester can SEE ads. **Flip both knobs back to LIVE before any App Store submission.** |
 
 Live units barely fill until AdMob has reviewed the app, and AdMob only reviews
 once the app is public — so a tester on a live build sees blank space and

@@ -12,7 +12,7 @@ When you win, the stroke and its mirror close into a symmetric figure.
 
     npm install
     npm run dev        # http://localhost:5173
-    npm test           # 506 unit tests, incl. all 100 levels re-proved
+    npm test           # 1106 unit tests, incl. all 300 levels re-proved
     npm run build      # tsc --noEmit && vite build
     SIM=<udid> npm run ios:run   # build + install + launch on a simulator
 
@@ -22,12 +22,18 @@ the Capacitor iOS shell, and AdMob + Remove Ads.
 
 Still open from the original plan: the debug overlay (step 5).
 
-**100 levels**, five hand-authored and 95 generated. Every one is *proved*
-solvable by `LevelValidator` — a BFS over the drawable half where each cell and
-each edge is gated by the real `CollisionSystem`, so the validator can never be
-more permissive than the game. `levels.test.ts` re-proves all 100 on every run,
-which is what stops a change to the hit radius or the playfield inset from
-silently stranding a level.
+**300 levels**, five hand-authored and 295 generated MAZES. Each is a
+spanning-tree labyrinth carved over the drawable half — one true route from
+start to goal, everything else a dead end — with a difficulty-growing fraction
+of its walls emitted on the FAR half instead. Mirroring makes that a pure
+visibility choice: a wall at `[a, a+w]` and a far wall at `[1−a−w, 1−a]`
+constrain the stroke+reflection pair identically, so the maze the player must
+solve is partly invisible where they draw, and the only way to tell a real
+fork from a trap is to fold the far half across in their head. Every level is
+*proved* solvable by `LevelValidator` — a BFS gated by the real
+`CollisionSystem`, so the validator can never be more permissive than the game
+— and forced to wind (route ≥ 1.5× the direct distance) with real decoy mass.
+`levels.test.ts` re-proves all 300 on every run.
 
 ### Ordering by difficulty, not by density
 
@@ -47,10 +53,15 @@ and the test suite compute the same number and the shipped order can be checked
 against the rule that produced it — a pool-relative rank blend reads better and
 is untestable.
 
-The generator now measures a pool several times larger than the set and ships an
-even spread across its difficulty range, instead of taking one end. After:
-interlock ρ **−0.057 → 0.783**, tightness ρ 0.892 → 0.978, and clearance falls
-smoothly (33.6 → 9.0) with no band-to-band cliff. Tests pin all three.
+The generator measures a pool an order of magnitude larger than the set, then
+ships a spread across its difficulty range **skewed toward the hard end**
+(`SKEW = 0.55`): position 0 still takes the easiest candidate and position 94
+the hardest, but the middle of the game samples from what a linear spread
+called the top third. The set is built to be demanding — the warm-up lives in
+the hand-authored tutorial, not in thirty roomy generated levels. After:
+interlock ρ **−0.057 → ~0.8**, and clearance falls smoothly 30 → 8 base px
+with no band-to-band cliff, against a proved playable floor of 6. Tests pin
+all of it.
 
 ### Craft
 
@@ -130,10 +141,11 @@ damped thud, not a buzzer — the game asks you to fail dozens of times a minute
 and an alarm would be unbearable. Nothing loops, and the context is created on
 the first real touch because iOS refuses to start audio any other way.
 
-The Remove Ads *purchase* is built but not chargeable: no StoreKit products
-exist for `com.noqyris.foldwing` yet, so `Iap.available` is false and every
-purchase surface hides itself rather than offering a button that cannot work.
-Wiring it is a change to `systems/Iap.ts` only.
+Remove Ads ($0.99, non-consumable, family-shareable) is wired to StoreKit via
+`cordova-plugin-purchase` and was approved with 1.0. The whole store surface
+lives in `systems/Iap.ts`; nothing touches StoreKit until the player opens the
+purchase or restore flow, because a payment-queue observer at launch makes a
+signed-out device demand an Apple Account before the first tap.
 
 ## Controls
 
@@ -155,7 +167,7 @@ win advances.
       core/StrokeRecorder.ts  raw sampling, Chaikin smoothing, mirroring
       core/CollisionSystem.ts stroke + reflection against the full wall list
       core/DrawCursor.ts      the touch finger-offset, as a pure function
-      data/levels.ts          5 hand-authored + 95 generated = 100
+      data/levels.ts          5 hand-authored + 295 generated = 300
       data/generatedLevels.ts GENERATED — run scripts/genLevels.ts
       core/LevelValidator.ts  BFS proof that a level can be finished
       core/Ribbon.ts          speed-driven variable-width ink
@@ -178,14 +190,19 @@ times". `HitArea.ts` owns the correction and a test pins it.
 
 **The level grid.** Phaser re-runs a Graphics object's command list into the
 batch every frame — nothing is cached just because nothing changed. 100 cards of
-vector art ran the grid at **5fps** while the menu and the game held 60. Three
-changes, each measured: `ScrollView` hides off-screen rows (5→14fps), the cards
-are baked once into a single render-texture atlas so they draw as quads
-(14→42fps), and the clipping window is a camera viewport rather than a geometry
-mask, which trades a per-frame stencil pass for a GPU scissor (42→61fps). Under
-an actual drag, dropped frames went from 100% to 1.3%. The atlas is ~22MB and is
-freed on leaving the screen — destroying the RenderTexture is *not* enough,
-because `saveTexture` hands the TextureManager its own reference.
+vector art ran the grid at **5fps** while the menu and the game held 60. The
+fixes, each measured: `ScrollView` hides off-screen rows (5→14fps), the clipping
+window is a camera viewport rather than a geometry mask (a GPU scissor instead
+of a per-frame stencil pass), and the card art itself is tinted quads — the
+chrome and three little discs bake once into two tiny shared textures, walls are
+NineSlices of a 12×12 rounded square, and the only per-card raster is the number
+label's Text canvas. An earlier iteration baked whole cards into one atlas;
+that died at 300 levels, where the atlas passes 8192px (over MAX_TEXTURE_SIZE on
+older iPhones) and ~70MB. The quad version measures a flat 8.3ms/frame during a
+hard fling at 300 cards, and texture memory no longer grows with the level
+count. (The Gallery still uses the atlas bake — figures are freehand ribbons,
+not rectangles — and stays under the 4096px floor only because the save caps
+stored figures at 120.)
 
 `Playfield` is the one addition to the architecture in the spec: something has
 to own the normalized-to-pixel conversion, and giving it a home keeps that
