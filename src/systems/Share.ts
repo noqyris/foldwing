@@ -48,6 +48,29 @@ class ShareService {
     return this.shareWeb(req);
   }
 
+  /**
+   * Plain text, no image — for spoiler-safe results that should paste into a
+   * group chat as text (the daily). Falls back to the clipboard on platforms
+   * without a share sheet, so the button always yields something pasteable.
+   */
+  async shareText(title: string, text: string): Promise<boolean> {
+    try {
+      if (isNative()) {
+        await NativeShare.share({ title, text, dialogTitle: title });
+        return true;
+      }
+      const nav = navigator as Navigator & { share?: (d: ShareData) => Promise<void> };
+      if (nav.share) {
+        await nav.share({ title, text });
+        return true;
+      }
+      await navigator.clipboard?.writeText(text);
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
   private async shareNative(req: ShareRequest): Promise<boolean> {
     try {
       // Cache, not Documents: this is a derived artefact the user can always

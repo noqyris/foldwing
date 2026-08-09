@@ -35,6 +35,12 @@ export interface SavedFigure {
   readonly at: number;
 }
 
+/** One finished Daily Fold. */
+export interface DailyResult {
+  readonly ms: number;
+  readonly attempts: number;
+}
+
 export interface SaveData {
   /** Highest level index the player has unlocked. 0 = only the first. */
   unlockedIndex: number;
@@ -58,6 +64,12 @@ export interface SaveData {
   ratePrompted: boolean;
   /** Every figure the player has ever drawn, newest last. */
   figures: SavedFigure[];
+  /** Finished Daily Folds, keyed by ISO date (YYYY-MM-DD). */
+  daily: Record<string, DailyResult>;
+  /** Level ids beaten at or under the medal ratio of par. */
+  medals: string[];
+  /** Fold Sense: EMA of recent win scores, 0..100. 0 = not yet rated. */
+  foldSense: number;
 }
 
 /**
@@ -82,6 +94,9 @@ function freshSave(): SaveData {
     attemptsSinceAd: 0,
     ratePrompted: false,
     figures: [],
+    daily: {},
+    medals: [],
+    foldSense: 0,
   };
 }
 
@@ -119,6 +134,18 @@ function coerce(raw: unknown): SaveData {
       })
     : base.figures;
 
+  /** Keep only well-formed daily entries under sane ISO-date keys. */
+  const daily: Record<string, DailyResult> = {};
+  if (typeof r.daily === 'object' && r.daily !== null) {
+    for (const [k, v] of Object.entries(r.daily as Record<string, unknown>)) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(k)) continue;
+      if (typeof v !== 'object' || v === null) continue;
+      const d = v as Partial<DailyResult>;
+      if (typeof d.ms !== 'number' || !Number.isFinite(d.ms)) continue;
+      daily[k] = { ms: Math.max(0, d.ms), attempts: count(d.attempts, 1, 1) };
+    }
+  }
+
   return {
     unlockedIndex: count(r.unlockedIndex, base.unlockedIndex),
     bestMs: typeof r.bestMs === 'object' && r.bestMs !== null ? r.bestMs : base.bestMs,
@@ -131,6 +158,9 @@ function coerce(raw: unknown): SaveData {
     attemptsSinceAd: count(r.attemptsSinceAd, base.attemptsSinceAd),
     ratePrompted: r.ratePrompted === true,
     figures,
+    daily,
+    medals: Array.isArray(r.medals) ? r.medals.filter((m) => typeof m === 'string') : base.medals,
+    foldSense: Math.min(100, count(r.foldSense, base.foldSense)),
   };
 }
 
@@ -238,6 +268,47 @@ class ProgressStore {
   setAdsRemoved(owned: boolean): void {
     if (this.state.adsRemoved === owned) return;
     this.update({ adsRemoved: owned });
+  }
+
+  /* ---------------------------------------------------------- daily fold */
+
+  /** Record today's Daily Fold. First finish wins; replays don't overwrite. */
+  recordDaily(dateISO: string, ms: number, attempts: number): void {
+    if (this.state.daily[dateISO]) return;
+    this.update({ daily: { ...this.state.daily, [dateISO]: { ms, attempts } } });
+  }
+
+  hasDaily(dateISO: string): boolean {
+    return dateISO in this.state.daily;
+  }
+
+  /**
+   * Consecutive finished days ending at `todayISO`. Today itself counts only
+   * once finished, but an unfinished today does not BREAK the run — the
+   * streak survives until the day actually passes, which is how every streak
+   * the player has ever kept works.
+   */
+  dailyStreak(todayISO: string): number {
+    const done = this.state.daily;
+    let day = new Date(`${todayISO}T00:00:00Z`);
+    if (!done[todayISO]) day = new Date(day.getTime() - 86400000);
+    let streak = 0;
+    while (done[day.toISOString().slice(0, 10)]) {
+      streak++;
+      day = new Date(day.getTime() - 86400000);
+    }
+    return streak;
+  }
+
+  /* -------------------------------------------------------------- medals */
+
+  addMedal(levelId: string): void {
+    if (this.state.medals.includes(levelId)) return;
+    this.update({ medals: [...this.state.medals, levelId] });
+  }
+
+  hasMedal(levelId: string): boolean {
+    return this.state.medals.includes(levelId);
   }
 
   /** A cheap reason to open the app tomorrow. */
