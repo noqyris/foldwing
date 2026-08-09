@@ -102,11 +102,18 @@ export const monetization = {
    * ads to real users violates AdMob policy, and clicking your own LIVE ads is
    * invalid traffic — the most common way to get an AdMob account banned.
    */
-  useTestAds: false,
+  useTestAds: true,
 
   products: {
     /** Non-consumable. Kills the banner and interstitials, unlocks unlimited reveals. */
     removeAds: 'com.noqyris.foldwing.removeads',
+    /**
+     * Consumable hint pack — the second pillar of puzzle IAP. Offered at the
+     * out-of-reveals moment, next to the rewarded option, never instead of
+     * it: reveals must stay earnable or the rewarded loop stops being honest.
+     */
+    revealPack: 'com.noqyris.foldwing.reveals20',
+    revealPackCount: 20,
   },
 
   ads: {
@@ -157,6 +164,13 @@ export const monetization = {
     freeDailyTopUp: 1,
     startingStash: 2,
     durationMs: 6000,
+    /**
+     * The escalation ladder, in deaths on one level: at three, point at the
+     * fold (the contextual reveal offer — the highest-value rewarded moment
+     * in the game); at six, offer the way past. The gap between them exists
+     * so the game visibly tries to TEACH before it offers to excuse.
+     */
+    offerRevealAfterAttempts: 3,
     /** Only offer the skip once the level has genuinely resisted them. */
     offerSkipAfterAttempts: 6,
   },

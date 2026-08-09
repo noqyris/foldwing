@@ -35,17 +35,22 @@ export interface IapService {
   readonly available: boolean;
   init(): Promise<void>;
   removeAdsProduct(): StoreProduct | null;
+  revealPackProduct(): StoreProduct | null;
   /** @returns true if the entitlement is now owned. */
   buyRemoveAds(): Promise<boolean>;
+  /** @returns true if the reveals actually landed. */
+  buyRevealPack(): Promise<boolean>;
   /** @returns true/false when authoritative, null when the store did not answer. */
   restore(): Promise<boolean | null>;
 }
 
 const PRODUCT_ID = monetization.products.removeAds;
+const PACK_ID = monetization.products.revealPack;
 
 class StoreKitIapService implements IapService {
   private ready = false;
   private product: StoreProduct | null = null;
+  private packProduct: StoreProduct | null = null;
 
   /*
    * Offered on device WITHOUT having contacted the store yet — see `init`.
@@ -90,6 +95,7 @@ class StoreKitIapService implements IapService {
 
       store.register([
         { id: PRODUCT_ID, type: ProductType.NON_CONSUMABLE, platform: Platform.APPLE_APPSTORE },
+        { id: PACK_ID, type: ProductType.CONSUMABLE, platform: Platform.APPLE_APPSTORE },
       ]);
 
       /*
@@ -97,14 +103,23 @@ class StoreKitIapService implements IapService {
        *
        * `finish()` is not optional: an unfinished transaction is re-delivered
        * by StoreKit on every launch, so the player keeps being shown a purchase
-       * they already completed. Granting here rather than only inside
-       * `buyRemoveAds` is what makes a purchase that completes after the app
-       * was killed mid-flow still land on the next start.
+       * they already completed. Granting here rather than only inside the buy
+       * methods is what makes a purchase that completes after the app was
+       * killed mid-flow still land on the next start. For the CONSUMABLE that
+       * ordering is load-bearing in the other direction too: the reveals must
+       * be banked BEFORE finish(), because finish is what consumes the
+       * transaction — grant after a crash-interrupted finish and the pack
+       * would be paid for and never delivered.
        */
       store
         .when()
         .approved((t) => {
-          this.grant();
+          if (t.products.some((p) => p.id === PACK_ID)) {
+            Progress.grantReveals(monetization.products.revealPackCount);
+          }
+          if (t.products.some((p) => p.id === PRODUCT_ID)) {
+            this.grant();
+          }
           void t.finish();
         })
         .verified((r) => void r.finish());
@@ -141,6 +156,17 @@ class StoreKitIapService implements IapService {
         };
       }
 
+      const pack = store.get(PACK_ID, Platform.APPLE_APPSTORE);
+      if (pack) {
+        const offer = pack.getOffer();
+        this.packProduct = {
+          id: PACK_ID,
+          title: pack.title || '20 reveals',
+          description: pack.description || 'A stash of twenty folded-wall reveals.',
+          priceString: offer?.pricingPhases?.[0]?.price ?? '',
+        };
+      }
+
       // Already bought — on another device, or before a reinstall.
       if (p && store.owned({ id: PRODUCT_ID, platform: Platform.APPLE_APPSTORE })) {
         this.grant();
@@ -158,6 +184,30 @@ class StoreKitIapService implements IapService {
     if (!this.available) return null;
     // Before the first connect the price is unknown; the row still renders.
     return this.product ?? { id: PRODUCT_ID, title: 'Remove ads', description: '', priceString: '' };
+  }
+
+  revealPackProduct(): StoreProduct | null {
+    if (!this.available) return null;
+    return (
+      this.packProduct ?? { id: PACK_ID, title: '20 reveals', description: '', priceString: '' }
+    );
+  }
+
+  async buyRevealPack(): Promise<boolean> {
+    if (!(await this.connect())) return false;
+    try {
+      const { store, Platform } = CdvPurchase;
+      const offer = store.get(PACK_ID, Platform.APPLE_APPSTORE)?.getOffer();
+      if (!offer) return false;
+
+      const before = Progress.data.reveals;
+      await offer.order();
+      // The approved handler banks the reveals; a cancel leaves the count as
+      // it was, and that difference is the only honest success signal here.
+      return Progress.data.reveals > before;
+    } catch {
+      return false;
+    }
   }
 
   async buyRemoveAds(): Promise<boolean> {

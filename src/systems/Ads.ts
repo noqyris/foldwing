@@ -243,20 +243,38 @@ class AdsService {
   /* -------------------------------------------------------------- rewarded */
 
   /**
-   * Opt-in video. Resolves true only if the player actually earned the reward.
+   * Opt-in video, with the three outcomes a CALLER has to tell apart:
+   *
+   *   'earned'      the player watched and the reward is owed
+   *   'declined'    an ad played but the player closed it before the reward —
+   *                 they backed out of the deal, so nothing is owed
+   *   'unavailable' no ad could even be loaded (no fill, offline, web build)
+   *
+   * The distinction exists because collapsing them to a boolean produced a
+   * dead button: "Skip this fold" called this, got `false` for NO-FILL — the
+   * permanent state of a new AdMob app before Google's review — and silently
+   * did nothing. An ad we fail to supply is our problem, not the player's;
+   * callers grant the reward on 'unavailable' and withhold it only on
+   * 'declined'.
+   *
    * A rewarded view also mutes interstitials for a while: someone who just
    * volunteered their attention should not be taxed again immediately.
    */
-  async showRewarded(placement: string): Promise<boolean> {
-    if (!this.rewardedAvailable || this.inFlight) return false;
+  async showRewarded(placement: string): Promise<'earned' | 'declined' | 'unavailable'> {
+    if (!this.rewardedAvailable) return 'unavailable';
+    if (this.inFlight) return 'declined';
     this.inFlight = true;
 
     try {
-      await AdMob.prepareRewardVideoAd({
-        adId: admobUnits().rewarded,
-        isTesting: monetization.useTestAds,
-        npa: !this.personalized,
-      });
+      try {
+        await AdMob.prepareRewardVideoAd({
+          adId: admobUnits().rewarded,
+          isTesting: monetization.useTestAds,
+          npa: !this.personalized,
+        });
+      } catch {
+        return 'unavailable';
+      }
 
       let earned = false;
       const onReward = (): void => {
@@ -268,13 +286,18 @@ class AdsService {
         [RewardAdPluginEvents.Dismissed, RewardAdPluginEvents.FailedToShow],
         60000
       );
-      await AdMob.showRewardVideoAd();
+      try {
+        await AdMob.showRewardVideoAd();
+      } catch {
+        return 'unavailable';
+      }
       await closed;
 
-      if (earned) this.mutedUntil = Date.now() + monetization.ads.muteAfterRewardedSeconds * 1000;
-      return earned;
-    } catch {
-      return false;
+      if (earned) {
+        this.mutedUntil = Date.now() + monetization.ads.muteAfterRewardedSeconds * 1000;
+        return 'earned';
+      }
+      return 'declined';
     } finally {
       void placement;
       this.inFlight = false;
