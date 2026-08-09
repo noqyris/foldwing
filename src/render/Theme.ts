@@ -136,12 +136,16 @@ export const METRICS = {
   /**
    * Finger travel over which the offset eases in, rather than snapping on at
    * pointerdown. Measured in DISTANCE, not time: a time-based ramp slides the
-   * cursor while the finger is still and draws ink nobody asked for. Short, so
-   * the thumb clears the cursor almost immediately; during the ramp the cursor
-   * moves at twice finger speed, which is brief enough to read as the line
-   * lifting off the start dot.
+   * cursor while the finger is still and draws ink nobody asked for.
+   *
+   * LONG on purpose. At pt(21) the ink hit full lead within a thumb-width of
+   * travel — double finger speed from the first millimetre — and players died
+   * on the first obstacle "while still starting". At pt(60), paired with the
+   * smoothstep ease in DrawCursor, the stroke leaves the start dot glued to
+   * the finger and gains its lead across the level's start runway, before the
+   * first wall can be reached.
    */
-  touchOffsetRampPx: pt(21),
+  touchOffsetRampPx: pt(60),
 
   /**
    * Longest gap allowed between points fed to the renderer's smoothing pass.

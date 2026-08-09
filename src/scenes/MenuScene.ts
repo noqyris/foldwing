@@ -10,6 +10,7 @@
 import Phaser from 'phaser';
 import { LEVELS } from '../data/levels';
 import { Ads } from '../systems/Ads';
+import { todayISO } from '../systems/Daily';
 import { Haptics } from '../systems/Haptics';
 import { applyEntitlement, Iap } from '../systems/Iap';
 import { Progress } from '../systems/Progress';
@@ -73,11 +74,21 @@ export class MenuScene extends Phaser.Scene {
      * "Restore purchases" got drawn half off the bottom of the canvas. Deriving
      * the geometry from the row count is the only version that cannot drift.
      */
+    /*
+     * The gap may never dip under pt(11): the primary button's drop shadow
+     * reaches exactly pt(7) spread + pt(4) offset past its box, so anything
+     * tighter paints the shadow onto the face of the next button — which is
+     * what the five-row stack did at pt(7). The selling stack pays for the
+     * wider gaps with slightly shorter purchase rows instead.
+     */
     const selling = Iap.available && !save.adsRemoved;
-    const rowGap = selling ? pt(7) : pt(11);
+    const rowGap = pt(11);
     const tallRow = pt(66);
     const row = pt(54);
-    let cursorY = selling ? pt(325) : pt(355);
+    // pt(321) leaves 13 base px between the tagline and the primary button's
+    // upward shadow reach (spread − offset = pt(3)); anything higher crowds
+    // the tagline against the button, which the simulator screenshot showed.
+    let cursorY = selling ? pt(321) : pt(355);
     const place = (h: number): number => {
       const y = cursorY + h / 2;
       cursorY += h + rowGap;
@@ -92,8 +103,36 @@ export class MenuScene extends Phaser.Scene {
       onPress: () => this.open(nextIndex),
     });
 
-    const levels = button(this, cx, place(row), 'Levels', {
+    /*
+     * The Daily Fold: one maze, everyone, today. The sub-line carries the
+     * whole retention loop in six words — done or not, and the streak.
+     */
+    const today = todayISO();
+    const doneToday = Progress.hasDaily(today);
+    const streak = Progress.dailyStreak(today);
+    const dailySub = doneToday
+      ? streak > 1
+        ? `solved · ${streak} day streak`
+        : 'solved · come back tomorrow'
+      : streak > 0
+        ? `${streak} day streak — keep it`
+        : 'one maze, everyone, today';
+    const daily = button(this, cx, place(row), 'Daily fold', {
       width: COLUMN,
+      height: row,
+      variant: 'secondary',
+      sub: dailySub,
+      onPress: () => {
+        Haptics.tap();
+        this.scene.start('Game', { daily: today });
+      },
+    });
+
+    // Levels and Gallery share a row: both are places you browse, and the
+    // stack has to fit the Daily above them and the store below.
+    const half = (COLUMN - pt(10)) / 2;
+    const levels = button(this, cx - half / 2 - pt(5), place(row), 'Levels', {
+      width: half,
       height: row,
       variant: 'secondary',
       onPress: () => {
@@ -101,10 +140,9 @@ export class MenuScene extends Phaser.Scene {
         this.scene.start('LevelSelect');
       },
     });
-
     const figureCount = save.figures.length;
-    const gallery = button(this, cx, place(row), 'Gallery', {
-      width: COLUMN,
+    const gallery = button(this, cx + half / 2 + pt(5), levels.y, 'Gallery', {
+      width: half,
       height: row,
       variant: 'secondary',
       onPress: () => {
@@ -113,7 +151,7 @@ export class MenuScene extends Phaser.Scene {
       },
     });
 
-    const entering: Phaser.GameObjects.GameObject[] = [mark, tagline, play, levels, gallery];
+    const entering: Phaser.GameObjects.GameObject[] = [mark, tagline, play, daily, levels, gallery];
 
     /*
      * The purchase rows continue the SAME stack, and REPLACE the reveal chip.
@@ -134,20 +172,20 @@ export class MenuScene extends Phaser.Scene {
       const product = Iap.removeAdsProduct();
       const price = product?.priceString ? ` · ${product.priceString}` : '';
       entering.push(
-        button(this, cx, place(pt(44)), `Remove ads${price}`, {
+        button(this, cx, place(pt(40)), `Remove ads${price}`, {
           width: COLUMN,
           variant: 'secondary',
           size: TYPE.body,
-          height: pt(44),
+          height: pt(40),
           onPress: () => void this.purchase(),
         })
       );
       entering.push(
-        button(this, cx, place(pt(34)), 'Restore purchases', {
+        button(this, cx, place(pt(28)), 'Restore purchases', {
           width: COLUMN,
           variant: 'ghost',
           size: TYPE.label,
-          height: pt(34),
+          height: pt(28),
           onPress: () => void this.restore(),
         })
       );
@@ -172,7 +210,11 @@ export class MenuScene extends Phaser.Scene {
     const unlimited = Progress.data.adsRemoved;
     const n = Progress.data.reveals;
     const reveals = unlimited ? 'unlimited reveals' : `${n} ${n === 1 ? 'reveal' : 'reveals'}`;
-    const text = figureCount > 0 ? `${reveals} · ${figureCount} folded` : reveals;
+    const sense = Progress.data.foldSense;
+    const bits = [reveals];
+    if (sense > 0) bits.push(`Fold Sense ${sense}`);
+    if (figureCount > 0) bits.push(`${figureCount} folded`);
+    const text = bits.join(' · ');
 
     const c = this.add.container(cx, y);
     const temp = label(this, 0, 0, text, { size: TYPE.label, alpha: 0.55 }).setOrigin(0.5);

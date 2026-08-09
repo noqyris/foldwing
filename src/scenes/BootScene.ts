@@ -12,8 +12,10 @@
 
 import Phaser from 'phaser';
 import { Ads } from '../systems/Ads';
+import { todayISO } from '../systems/Daily';
 import { Iap } from '../systems/Iap';
 import { Progress } from '../systems/Progress';
+import { WEB_DAILY } from '../systems/WebDaily';
 import { theme } from '../render/Theme';
 
 export class BootScene extends Phaser.Scene {
@@ -26,6 +28,13 @@ export class BootScene extends Phaser.Scene {
 
     Progress.installLifecycleFlush();
     void Progress.load().then((save) => {
+      // The web daily is the whole product on the web: no menu, no store,
+      // straight into today's fold.
+      if (WEB_DAILY) {
+        this.scene.start('Game', { daily: todayISO() });
+        return;
+      }
+
       // Tell the ad layer about the entitlement BEFORE anything can request an
       // ad, so an owner never sees one flash up during the first frame.
       Ads.setAdsRemoved(save.adsRemoved);

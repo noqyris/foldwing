@@ -15,6 +15,16 @@
  * motionless cursor, which is the only honest behaviour when every pixel of the
  * stroke is being tested against a wall.
  *
+ * The ease is a SMOOTHSTEP, not a line, and the ramp is long. The shipped
+ * linear ramp reached the full 42pt lead within 21pt of finger travel — the
+ * ink moved at double finger speed from the very first millimetre, and players
+ * consistently reported dying on the first obstacle "while I was still
+ * starting": their finger had barely left the start dot and the stroke was
+ * already two rows up the board. Smoothstep has zero slope at the origin, so
+ * the first moments of a stroke track the finger 1:1, and the lead builds
+ * across the start runway — which levels keep free of walls — instead of
+ * inside the first gate.
+ *
  * Kept pure, with no Phaser and no clock, so the offset — the whole of the
  * "finger never covers the cursor" acceptance criterion — is testable.
  */
@@ -35,6 +45,7 @@ export interface CursorOptions {
 export function drawCursor(raw: Vec2, opts: CursorOptions): Vec2 {
   if (!opts.touch) return { x: raw.x, y: raw.y };
 
-  const ramp = opts.rampPx <= 0 ? 1 : clamp(opts.travelPx / opts.rampPx, 0, 1);
-  return { x: raw.x, y: raw.y - opts.offsetY * ramp };
+  const t = opts.rampPx <= 0 ? 1 : clamp(opts.travelPx / opts.rampPx, 0, 1);
+  const ease = t * t * (3 - 2 * t);
+  return { x: raw.x, y: raw.y - opts.offsetY * ease };
 }

@@ -104,11 +104,18 @@ describe('feel constants', () => {
   it('eases the touch offset in over DISTANCE, not time', () => {
     // A time-based ramp moves the cursor while the finger is still, drawing —
     // and collision-testing — ink the player never made. The unit is the point.
-    expect(METRICS.touchOffsetRampPx).toBe(pt(21));
+    expect(METRICS.touchOffsetRampPx).toBe(pt(60));
     expect(METRICS.touchOffsetRampPx).toBeGreaterThan(0);
-    // Short enough that the thumb clears the cursor within a few millimetres of
-    // travel, and never so long that the takeoff dominates the stroke.
-    expect(METRICS.touchOffsetRampPx).toBeLessThanOrEqual(METRICS.touchOffsetY);
+    /*
+     * LONGER than the offset itself, on purpose. It was pt(21) — full lead
+     * within a thumb-width, ink at double finger speed from the first
+     * millimetre — and the recurring player report was dying on the first
+     * obstacle "while still starting". Paired with DrawCursor's smoothstep,
+     * pt(60) finishes the lift inside the level's start runway (every level
+     * keeps ≥ pt(70) of wall-free ground above the start dot), so the lead is
+     * complete before the first wall can be met but never dominates takeoff.
+     */
+    expect(METRICS.touchOffsetRampPx).toBeLessThanOrEqual(pt(70));
   });
 
   it('bounds render smoothing so the drawn line cannot lie about collision', () => {

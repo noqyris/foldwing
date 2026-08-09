@@ -96,6 +96,7 @@ function veil(ink: number, t: InkTheme): number {
 export class InkRenderer {
   private readonly levelG: Phaser.GameObjects.Graphics;
   private readonly revealG: Phaser.GameObjects.Graphics;
+  private readonly ghostG: Phaser.GameObjects.Graphics;
   private readonly mirrorG: Phaser.GameObjects.Graphics;
   private readonly strokeG: Phaser.GameObjects.Graphics;
   private readonly washG: Phaser.GameObjects.Graphics;
@@ -107,6 +108,8 @@ export class InkRenderer {
   ) {
     this.levelG = scene.add.graphics().setDepth(DEPTH.level);
     this.revealG = scene.add.graphics().setDepth(DEPTH.reveal).setAlpha(0);
+    // Below the live stroke: the previous attempt, kept as a faint ghost.
+    this.ghostG = scene.add.graphics().setDepth(DEPTH.reveal).setAlpha(0);
     // Opaque; the reflection's lightness lives in its colour, not its alpha.
     this.mirrorG = scene.add.graphics().setDepth(DEPTH.mirror);
     this.strokeG = scene.add.graphics().setDepth(DEPTH.stroke);
@@ -233,7 +236,11 @@ export class InkRenderer {
     g.clear();
     g.setAlpha(0);
 
-    g.fillStyle(t.fail, 0.16);
+    // Opaque fills, translucency on the WHOLE Graphics. Per-rect alpha
+    // double-paints wherever two walls overlap — and maze joints overlap on
+    // purpose — which stamped a darker patch on every junction of the
+    // revealed labyrinth.
+    g.fillStyle(t.fail, 1);
     for (const w of mirroredWalls) {
       const r = Math.min(METRICS.wallCornerRadius, w.w / 2, w.h / 2);
       g.fillRoundedRect(w.x, w.y, w.w, w.h, r);
@@ -242,7 +249,7 @@ export class InkRenderer {
     this.scene.tweens.killTweensOf(g);
     this.scene.tweens.add({
       targets: g,
-      alpha: 1,
+      alpha: 0.16,
       duration: 220,
       ease: 'Quad.easeOut',
       onComplete: () => {
@@ -256,6 +263,38 @@ export class InkRenderer {
         });
       },
     });
+  }
+
+  /* ---------------------------------------------------------------- ghost */
+
+  /**
+   * The previous attempt, as a thin faint centreline. Not a ribbon: the
+   * ghost is information ("here is where you died"), not ink, and drawing it
+   * at ribbon weight would read as a stroke the player still owns.
+   */
+  showGhost(points: readonly Vec2[]): void {
+    const t = theme();
+    const g = this.ghostG;
+    this.scene.tweens.killTweensOf(g);
+    g.clear();
+    if (points.length < 2) return;
+
+    g.lineStyle(Math.max(1, pt(1.2)), t.ink, 1);
+    g.beginPath();
+    g.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) g.lineTo(points[i].x, points[i].y);
+    g.strokePath();
+    // The death itself, marked.
+    const last = points[points.length - 1];
+    g.fillStyle(t.fail, 1);
+    g.fillCircle(last.x, last.y, pt(2.2));
+
+    g.setAlpha(0.16);
+  }
+
+  clearGhost(): void {
+    this.scene.tweens.killTweensOf(this.ghostG);
+    this.scene.tweens.add({ targets: this.ghostG, alpha: 0, duration: 200 });
   }
 
   clearReveal(): void {
@@ -303,6 +342,7 @@ export class InkRenderer {
     this.clearWin();
     this.levelG.destroy();
     this.revealG.destroy();
+    this.ghostG.destroy();
     this.mirrorG.destroy();
     this.strokeG.destroy();
     this.washG.destroy();

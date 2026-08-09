@@ -31,11 +31,16 @@ import {
   type Vec2,
 } from '../core/Geometry';
 import { Playfield } from '../core/Playfield';
+import { foldExposure, nextProfileScore, winScore } from '../core/FoldSense';
+import { routeArc } from '../core/LevelValidator';
 import { StrokeRecorder } from '../core/StrokeRecorder';
 import { LEVELS, levelAt } from '../data/levels';
 import type { Level } from '../data/types';
 import { monetization } from '../config/monetization';
 import { Ads } from '../systems/Ads';
+import { dailyLevel } from '../systems/Daily';
+import { Iap } from '../systems/Iap';
+import { APP_STORE_URL, WEB_DAILY } from '../systems/WebDaily';
 import { Audio } from '../systems/Audio';
 import { Haptics } from '../systems/Haptics';
 import { Progress } from '../systems/Progress';
@@ -50,6 +55,7 @@ import {
   label,
   RADIUS,
   roundRect,
+  softShadow,
   tappable,
   TAP_SLOP,
   TYPE,
@@ -57,8 +63,18 @@ import {
 
 type Phase = 'idle' | 'drawing' | 'failed' | 'won';
 
+/**
+ * A winning line at or under this multiple of the proved route's length
+ * earns the level's medal. 1.25 leaves room for human corners — the validator
+ * route hugs walls a finger cannot — while still demanding a planned line
+ * rather than a survived one.
+ */
+const MEDAL_RATIO = 1.25;
+
 export interface GameSceneData {
   levelIndex?: number;
+  /** ISO date (YYYY-MM-DD): play that day's Daily Fold instead of a level. */
+  daily?: string;
 }
 
 /**
@@ -92,7 +108,15 @@ export class GameScene extends Phaser.Scene {
   private phase: Phase = 'idle';
   private activePointer: number | null = null;
   private touchInput = false;
-  private touchAnchor: Vec2 = { x: 0, y: 0 };
+  /**
+   * Finger travel as accumulated ARC LENGTH, not straight-line distance from
+   * the anchor. Maze routes wind back toward where they started; a
+   * straight-line measure would shrink again on the way back, dropping the
+   * cursor's lift mid-stroke and sagging live, collision-tested ink downward
+   * through whatever is beneath it. Arc length only ever grows.
+   */
+  private fingerTravel = 0;
+  private lastFinger: Vec2 = { x: 0, y: 0 };
   private strokeStartedAt = 0;
   private failTimer: Phaser.Time.TimerEvent | null = null;
   private advanceReadyAt = 0;
@@ -107,6 +131,21 @@ export class GameScene extends Phaser.Scene {
   private skipPill: Phaser.GameObjects.Container | null = null;
   private sharePill: Phaser.GameObjects.Container | null = null;
   private sharing = false;
+  /** Set when playing the Daily Fold: the ISO date being played. */
+  private dailyDate: string | null = null;
+  /** Winning line length over par, set at win; null when par is unknown. */
+  private winRatio: number | null = null;
+  private winMedal = false;
+  /** Fold Sense signals, accumulated per level. */
+  private levelReveals = 0;
+  private mirrorDeaths = 0;
+  private totalDeaths = 0;
+  private winSense = 0;
+  /** The previous failed attempt, redrawn as a ghost on the next try. */
+  private lastAttempt: Vec2[] | null = null;
+  private revealOfferPill: Phaser.GameObjects.Container | null = null;
+  private refillSheet: Phaser.GameObjects.Container | null = null;
+  private webDailyEnd: Phaser.GameObjects.Container | null = null;
 
   constructor() {
     super('Game');
@@ -132,7 +171,9 @@ export class GameScene extends Phaser.Scene {
       this.ink.destroy();
     });
 
-    this.loadLevel(data.levelIndex ?? 0);
+    this.dailyDate = data.daily ?? null;
+    if (this.dailyDate) this.loadDaily(this.dailyDate);
+    else this.loadLevel(data.levelIndex ?? 0);
 
     // The banner is always on now. The playfield inset already reserves its
     // strip, so it covers paper margin rather than anything you can touch.
@@ -143,7 +184,19 @@ export class GameScene extends Phaser.Scene {
 
   private loadLevel(index: number): void {
     this.levelIndex = ((index % LEVELS.length) + LEVELS.length) % LEVELS.length;
-    this.level = levelAt(this.levelIndex);
+    this.installLevel(levelAt(this.levelIndex));
+  }
+
+  /** The Daily Fold: computed from the date, not looked up in LEVELS. */
+  private loadDaily(dateISO: string): void {
+    // For everything keyed off a level INDEX — ad gating, nothing else — the
+    // daily counts as mid-game: past the tutorial grace, nothing special.
+    this.levelIndex = Math.floor(LEVELS.length / 2);
+    this.installLevel(dailyLevel(dateISO));
+  }
+
+  private installLevel(level: Level): void {
+    this.level = level;
 
     const walls: Rect[] = this.level.walls.map((w) => this.pf.toScreenRect(w));
     this.startPx = this.pf.toScreen(this.level.start);
@@ -174,19 +227,56 @@ export class GameScene extends Phaser.Scene {
 
     this.attempts = 0;
     this.advancing = false;
+    this.lastAttempt = null;
+    this.winRatio = null;
+    this.winMedal = false;
+    this.levelReveals = 0;
+    this.mirrorDeaths = 0;
+    this.totalDeaths = 0;
+    this.winSense = 0;
     Audio.resetScale();
     this.ink.clearReveal();
+    this.ink.clearGhost();
     this.resetToIdle();
     this.ink.drawLevel(walls, this.startPx, this.goalPx);
     this.clearSkipOffer();
+    this.clearRevealOffer();
+    this.closeRefillSheet();
     this.clearShareOffer();
     this.refreshHud();
+
+    /*
+     * The one deliberate tutorial line outside the tutorial. Level 6 is the
+     * first generated maze — the first time walls are hidden in the fold —
+     * and the Reveal button is the tool for exactly that. Say so, once, at
+     * the moment it becomes true, and stop once the level is beaten.
+     */
+    if (this.levelIndex === 5 && !this.dailyDate && !Progress.hasCleared('l6')) {
+      this.showHint('stuck? Reveal shows the walls folded from the far half', 900);
+      this.time.delayedCall(7000, () => {
+        if (this.phase !== 'won') this.hideHint();
+      });
+    }
+
+    // A web visitor who already folded today lands on their result, not on a
+    // replay they did not ask for.
+    if (WEB_DAILY && this.dailyDate && Progress.hasDaily(this.dailyDate)) {
+      this.showWebDailyEnd();
+    } else if (WEB_DAILY && this.dailyDate) {
+      this.showHint('one maze a day · the same for everyone', 900);
+      this.time.delayedCall(6000, () => {
+        if (this.phase !== 'won') this.hideHint();
+      });
+    }
   }
 
   /* ---------------------------------------------------------------- input */
 
   private onPointerDown(pointer: Phaser.Input.Pointer): void {
     Audio.unlock();
+
+    // A modal sheet owns the screen; the board underneath must not react.
+    if (this.refillSheet || this.webDailyEnd) return;
 
     if (this.phase === 'won') {
       // A tap anywhere means "next", so the share button has to carve itself
@@ -211,7 +301,8 @@ export class GameScene extends Phaser.Scene {
 
     this.activePointer = pointer.id;
     this.touchInput = isTouchPointer(pointer);
-    this.touchAnchor = touch;
+    this.fingerTravel = 0;
+    this.lastFinger = touch;
     this.strokeStartedAt = this.time.now;
     this.attempts += 1;
     this.phase = 'drawing';
@@ -219,6 +310,7 @@ export class GameScene extends Phaser.Scene {
     // The stroke is anchored on the dot rather than under the finger, so the
     // ink always begins exactly where the level says it does.
     for (const gate of this.gates) gate.passed = false;
+    this.ink.clearGhost();
     Audio.resetScale();
     this.recorder.begin(this.startPx, this.time.now);
     this.ink.drawStroke(this.recorder.points, this.recorder.times);
@@ -243,11 +335,12 @@ export class GameScene extends Phaser.Scene {
     const goalT = segCircleEntryT(prev, cursor, this.goalPx, METRICS.goalRadius);
 
     if (blocked) {
-      const hitT = this.collision.firstHitT(prev, cursor) ?? 0;
+      const hit = this.collision.firstHit(prev, cursor);
+      const hitT = hit?.t ?? 0;
       // One long segment can reach both a wall and the goal. Whichever the
       // gesture arrived at first is what actually happened.
       if (goalT !== null && goalT < hitT) this.win(lerpPoint(prev, cursor, goalT));
-      else this.fail(lerpPoint(prev, cursor, hitT));
+      else this.fail(lerpPoint(prev, cursor, hitT), hit?.mirror ?? false);
       return;
     }
 
@@ -283,12 +376,14 @@ export class GameScene extends Phaser.Scene {
   /** Pointer position -> ink position: the thumb lift, then the drawable clamp. */
   private cursorFor(pointer: Phaser.Input.Pointer): Vec2 {
     const raw: Vec2 = { x: pointer.x, y: pointer.y };
+    // Travel, not elapsed time. A finger resting on the glass must not drag
+    // the cursor — and therefore the collision-tested stroke — with it.
+    this.fingerTravel += dist(raw, this.lastFinger);
+    this.lastFinger = raw;
     return this.pf.clampToDrawable(
       drawCursor(raw, {
         touch: this.touchInput,
-        // Travel, not elapsed time. A finger resting on the glass must not
-        // drag the cursor — and therefore the collision-tested stroke — with it.
-        travelPx: dist(raw, this.touchAnchor),
+        travelPx: this.fingerTravel,
         offsetY: METRICS.touchOffsetY,
         rampPx: METRICS.touchOffsetRampPx,
       })
@@ -297,10 +392,18 @@ export class GameScene extends Phaser.Scene {
 
   /* -------------------------------------------------------- state changes */
 
-  private fail(contact: Vec2): void {
+  private fail(contact: Vec2, mirrorDeath = false): void {
     this.recorder.pushExact(contact, this.time.now);
     this.phase = 'failed';
     this.activePointer = null;
+
+    this.totalDeaths += 1;
+    if (mirrorDeath) this.mirrorDeaths += 1;
+
+    // Keep the corpse: the next idle board draws it as a ghost, so a death
+    // teaches instead of just taxing. Frustration that informs brings the
+    // player back; frustration that withholds sends them away.
+    this.lastAttempt = [...this.recorder.points];
 
     Haptics.thud();
     Audio.thud();
@@ -316,13 +419,25 @@ export class GameScene extends Phaser.Scene {
       void this.maybeAdOnRetry();
     });
 
-    // A level that has genuinely resisted them earns the offer of a way past.
+    /*
+     * Escalating help, one offer at a time. Three deaths: point at the thing
+     * they cannot see (the fold) — the reveal pill. Six: offer the way past —
+     * the skip replaces the reveal offer. Never both; a stack of rescue
+     * buttons reads as the game giving up on them.
+     */
     if (
       this.attempts >= monetization.reveals.offerSkipAfterAttempts &&
       !this.skipPill &&
-      Ads.rewardedAvailable
+      !this.dailyDate // there is nothing to skip TO on the daily
     ) {
+      this.clearRevealOffer();
       this.showSkipOffer();
+    } else if (
+      this.attempts >= monetization.reveals.offerRevealAfterAttempts &&
+      !this.revealOfferPill &&
+      !this.skipPill
+    ) {
+      this.showRevealOffer();
     }
   }
 
@@ -332,7 +447,50 @@ export class GameScene extends Phaser.Scene {
     this.activePointer = null;
 
     const elapsed = this.time.now - this.strokeStartedAt;
-    Progress.recordWin(this.level.id, this.levelIndex, elapsed, LEVELS.length);
+    if (this.dailyDate) {
+      // The daily records its own ledger and unlocks nothing.
+      Progress.recordDaily(this.dailyDate, elapsed, this.attempts);
+      Progress.update({
+        totalWins: Progress.data.totalWins + 1,
+        winsSinceAd: Progress.data.winsSinceAd + 1,
+      });
+    } else {
+      Progress.recordWin(this.level.id, this.levelIndex, elapsed, LEVELS.length);
+    }
+
+    /*
+     * Par: the winning line measured against the validator's proved route.
+     * Every completed level becomes a score to beat at zero content cost —
+     * "1.83× par" is an invitation, "1.12× par" a brag. Generated levels
+     * carry parPx precomputed; the five tutorials compute it on first win.
+     */
+    let lineLen = 0;
+    for (let i = 1; i < this.recorder.points.length; i++) {
+      lineLen += dist(this.recorder.points[i], this.recorder.points[i - 1]);
+    }
+    const par =
+      this.level.parPx ??
+      routeArc(this.level, this.pf, {
+        cell: 6,
+        hitRadius: METRICS.hitRadius,
+        goalRadius: METRICS.goalRadius,
+      })?.arc;
+    this.winRatio = par && par > 0 ? lineLen / par : null;
+    this.winMedal = this.winRatio !== null && this.winRatio <= MEDAL_RATIO;
+    if (this.winMedal && !this.dailyDate) Progress.addMedal(this.level.id);
+
+    // Fold Sense: score this win from real play signals, fold the profile
+    // rating toward it.
+    this.winSense = winScore({
+      parRatio: this.winRatio,
+      attempts: this.attempts,
+      revealsUsed: this.levelReveals,
+      mirrorDeathShare: this.totalDeaths === 0 ? 0 : this.mirrorDeaths / this.totalDeaths,
+      foldExposure: foldExposure(this.level),
+    });
+    Progress.update({
+      foldSense: nextProfileScore(Progress.data.foldSense, this.winSense),
+    });
 
     // Keep the figure. Normalized, with its timing, so it can be redrawn on any
     // device at any size — including 1080×1080 in someone else's feed.
@@ -360,7 +518,10 @@ export class GameScene extends Phaser.Scene {
     this.advanceReadyAt = this.time.now + readyIn;
 
     this.refreshHud();
-    this.showHint('tap for the next fold', readyIn);
+    this.showHint(
+      WEB_DAILY && this.dailyDate ? 'tap to finish · come back tomorrow' : 'tap for the next fold',
+      readyIn
+    );
     this.showShareOffer(readyIn);
 
     // At most one interruption per moment. If an ad is queued for the way out,
@@ -386,6 +547,9 @@ export class GameScene extends Phaser.Scene {
     this.activePointer = null;
     this.clearShareOffer();
     this.hideHint();
+    // The previous attempt lingers as a ghost until the next stroke begins:
+    // where it died is the one fact the player needs for the next plan.
+    if (this.lastAttempt) this.ink.showGhost(this.lastAttempt);
     this.refreshHud();
   }
 
@@ -406,6 +570,17 @@ export class GameScene extends Phaser.Scene {
       if (shown) Progress.update({ winsSinceAd: 0, attemptsSinceAd: 0 });
     }
 
+    // One fold per day: leaving the daily goes home, tomorrow brings another.
+    if (this.dailyDate) {
+      if (WEB_DAILY) {
+        // There is no home on the web — the end card is the destination.
+        this.advancing = false;
+        this.showWebDailyEnd();
+        return;
+      }
+      this.scene.start('Menu');
+      return;
+    }
     if (next >= LEVELS.length) {
       this.scene.start('LevelSelect');
       return;
@@ -415,25 +590,168 @@ export class GameScene extends Phaser.Scene {
 
   /* --------------------------------------------------------------- reveal */
 
-  /** Spend a reveal, or offer a rewarded video when the stash is empty. */
+  /** Spend a reveal, or open the refill sheet when the stash is empty. */
   private async doReveal(): Promise<void> {
     if (this.phase === 'won') return;
     Haptics.tap();
 
     if (Progress.spendReveal()) {
+      this.levelReveals += 1;
       this.ink.showReveal(this.mirrorBands, monetization.reveals.durationMs);
       this.refreshHud();
       return;
     }
 
-    if (!Ads.rewardedAvailable) return;
-    const earned = await Ads.showRewarded('reveal');
-    if (!earned) return;
+    this.showRefillSheet();
+  }
 
-    Progress.grantReveals(monetization.reveals.grantedPerRewarded);
-    // Bank it rather than auto-spending: letting the player choose the moment
-    // is what makes them watch the next one.
-    this.refreshHud();
+  /**
+   * Out of reveals: the one contextual store moment in the game. Wherever the
+   * rewarded unit exists it comes FIRST and is the only primary — reveals must
+   * stay earnable, or watching the next ad stops being a fair deal — and the
+   * pack sits beside it for whoever values their time differently. The pack
+   * stays 'secondary' even when it is the only row: the purchase never gets
+   * promoted just because the free path happens to be missing.
+   */
+  private showRefillSheet(): void {
+    if (this.refillSheet) return;
+
+    /*
+     * Build the rows FIRST, and only rows that can actually do something.
+     *
+     * The rewarded row used to be unconditional, which put a dead primary
+     * button in front of anyone the rewarded unit is not available to — the
+     * whole web Daily build, where there is no AdMob at all. And when nothing
+     * at all can be offered, a card whose only live control is "Not now" is
+     * worse than saying the plain truth.
+     */
+    const pack = Iap.available ? Iap.revealPackProduct() : null;
+    const offers: Array<{
+      text: string;
+      variant: 'primary' | 'secondary';
+      press: () => void;
+    }> = [];
+
+    if (Ads.rewardedAvailable) {
+      offers.push({
+        text: 'Watch an ad · +1',
+        variant: 'primary',
+        press: () => void this.earnReveal(),
+      });
+    }
+    if (pack) {
+      const price = pack.priceString ? ` · ${pack.priceString}` : '';
+      offers.push({
+        text: `20 reveals${price}`,
+        variant: 'secondary',
+        press: () =>
+          void (async () => {
+            await Iap.buyRevealPack();
+            this.refreshHud();
+          })(),
+      });
+    }
+
+    if (offers.length === 0) {
+      this.flashHint('out of reveals — one more lands tomorrow');
+      return;
+    }
+
+    const t = theme();
+    const sheet = this.add.container(0, 0).setDepth(90);
+
+    const dim = this.add
+      .rectangle(BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_WIDTH, BASE_HEIGHT, t.ink, 0.22)
+      .setInteractive();
+    dim.on(Phaser.Input.Events.GAMEOBJECT_POINTER_UP, () => this.closeRefillSheet());
+    sheet.add(dim);
+
+    const cw = pt(280);
+    /*
+     * Height derived from the row count rather than a literal per case — the
+     * same lesson the menu stack learned when a hand-placed row got drawn off
+     * the bottom of the canvas. Title gap, one gap per extra offer, the tail
+     * gap to "Not now", its half height, and the bottom pad.
+     */
+    const ch = pt(58) + pt(48) * (offers.length - 1) + pt(46) + pt(16) + pt(28);
+    const cy = BASE_HEIGHT / 2;
+    const card = this.add.graphics();
+    softShadow(card, BASE_WIDTH / 2 - cw / 2, cy - ch / 2, cw, ch, RADIUS.md, 0.8);
+    card.fillStyle(t.paper, 1);
+    roundRect(card, BASE_WIDTH / 2 - cw / 2, cy - ch / 2, cw, ch, RADIUS.md);
+    sheet.add(card);
+
+    sheet.add(
+      label(this, BASE_WIDTH / 2, cy - ch / 2 + pt(24), 'Out of reveals', {
+        size: TYPE.body,
+        font: FONT.display,
+        alpha: 0.8,
+      }).setOrigin(0.5)
+    );
+
+    let rowY = cy - ch / 2 + pt(58);
+    offers.forEach((offer, i) => {
+      if (i > 0) rowY += pt(48);
+      sheet.add(
+        button(this, BASE_WIDTH / 2, rowY, offer.text, {
+          width: cw - pt(32),
+          height: pt(40),
+          variant: offer.variant,
+          size: TYPE.label,
+          onPress: () => {
+            this.closeRefillSheet();
+            offer.press();
+          },
+        })
+      );
+    });
+
+    rowY += pt(46);
+    sheet.add(
+      button(this, BASE_WIDTH / 2, rowY, 'Not now', {
+        width: cw - pt(32),
+        height: pt(32),
+        variant: 'ghost',
+        size: TYPE.label,
+        onPress: () => this.closeRefillSheet(),
+      })
+    );
+
+    this.refillSheet = sheet;
+  }
+
+  /**
+   * The rewarded refill. The reveal is granted ONLY when the ad was actually
+   * watched to the reward.
+   *
+   * This used to grant on anything that was not 'declined', which meant
+   * 'unavailable' paid out too — and 'unavailable' covers no-fill, offline,
+   * and every non-native build. On the web Daily that made this button an
+   * infinite reveal dispenser that never showed an ad: the limit was not
+   * generous, it was switched off. Reveals are the game's one currency, so
+   * the payout has to cost what it claims to cost.
+   *
+   * The instinct behind the old code is still right — a control that visibly
+   * does nothing reads as broken — so a missing ad now SAYS it is missing
+   * rather than quietly paying. (`doSkip` keeps granting on 'unavailable' on
+   * purpose: a skip spends no currency, so letting it through costs nothing.)
+   */
+  private async earnReveal(): Promise<void> {
+    const result = await Ads.showRewarded('reveal');
+    if (result === 'earned') {
+      Progress.grantReveals(monetization.reveals.grantedPerRewarded);
+      this.refreshHud();
+      return;
+    }
+    // 'declined' means they closed the ad early and know why nothing arrived.
+    if (result === 'unavailable') {
+      this.flashHint('no ad ready just now — try again in a moment');
+    }
+  }
+
+  private closeRefillSheet(): void {
+    this.refillSheet?.destroy(true);
+    this.refillSheet = null;
   }
 
   /**
@@ -460,13 +778,24 @@ export class GameScene extends Phaser.Scene {
   private showShareOffer(delay: number): void {
     this.clearShareOffer();
 
-    const pill = button(this, BASE_WIDTH / 2, BASE_HEIGHT - METRICS.bannerReserve - pt(34), 'Share this fold', {
+    // pt(62) up, NOT pt(34): the "tap for the next fold" hint is bottom-anchored
+    // at the banner line right below, and at pt(34) the pill's lower half sat
+    // on top of the hint's first line — two messages through each other.
+    const pill = button(this, BASE_WIDTH / 2, BASE_HEIGHT - METRICS.bannerReserve - pt(62), 'Share this fold', {
       width: pt(190),
       height: pt(40),
       variant: 'secondary',
       size: TYPE.label,
       onPress: () => void this.shareCurrent(),
     });
+    // An opaque paper backing under the translucent face, and a depth ABOVE
+    // the win layer (30) and its wash (40): without the depth the figure was
+    // drawn straight over the pill, dots through the label text.
+    const backing = this.add.graphics();
+    backing.fillStyle(theme().paper, 1);
+    roundRect(backing, -pt(95), -pt(20), pt(190), pt(40), RADIUS.md);
+    pill.addAt(backing, 0);
+    pill.setDepth(50);
     pill.setAlpha(0);
     this.sharePill = pill;
 
@@ -494,12 +823,25 @@ export class GameScene extends Phaser.Scene {
   }
 
   private async shareCurrent(): Promise<void> {
-    const figure = Progress.figures[0];
-    if (!figure || this.sharing) return;
+    if (this.sharing) return;
     this.sharing = true;
     Haptics.tap();
 
     try {
+      /*
+       * The DAILY shares a spoiler-safe TEXT result, Wordle-style. Everyone
+       * plays the same maze today, and our drawn line IS the solution — so
+       * the daily result carries the score of the run, never its geometry.
+       * Text also pastes natively into the group chats where most puzzle
+       * sharing actually happens; an image can't.
+       */
+      if (this.dailyDate) {
+        await Share.shareText('Foldwing', this.dailyResultText());
+        return;
+      }
+
+      const figure = Progress.figures[0];
+      if (!figure) return;
       const dataUrl = renderShareCard(figure, {
         caption: `${figure.levelName} · ${(figure.ms / 1000).toFixed(1)}s`,
       });
@@ -513,6 +855,117 @@ export class GameScene extends Phaser.Scene {
     } finally {
       this.sharing = false;
     }
+  }
+
+  /** `Foldwing Daily #7 · ✕✕✅ · ⊙1 · 47s · Fold Sense 74 · 🔥3` */
+  private dailyResultText(): string {
+    const date = this.dailyDate!;
+    const day =
+      Math.round((Date.parse(date) - Date.parse('2026-08-01')) / 86400000) + 1;
+    const result = Progress.data.daily[date];
+    const seconds = Math.round((result?.ms ?? 0) / 1000);
+    const time =
+      seconds >= 60 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : `${seconds}s`;
+
+    const parts = [`Foldwing Daily #${day}`];
+    // Tries and Fold Sense describe THIS session's run; on a revisit (played
+    // earlier, reopened later) only the recorded time and streak are honest.
+    if (this.phase === 'won') {
+      const shownDeaths = Math.min(this.totalDeaths, 9);
+      parts.push(`${'✕'.repeat(shownDeaths)}${this.totalDeaths > 9 ? '⋯' : ''}✅`);
+      if (this.levelReveals > 0) parts.push(`⊙${this.levelReveals}`);
+      parts.push(time, `Fold Sense ${this.winSense}`);
+    } else {
+      parts.push('✅', time);
+    }
+    const streak = Progress.dailyStreak(date);
+    if (streak > 1) parts.push(`🔥${streak}`);
+    return `${parts.join(' · ')}\n${APP_STORE_URL}`;
+  }
+
+  /* ---------------------------------------------------------- web daily */
+
+  /**
+   * The web daily's terminal screen: today is folded, here is your result,
+   * here is where the other 300 folds live. 'Fold again' stays a ghost —
+   * replaying is allowed (the recorded result never overwrites), it is just
+   * not the point.
+   */
+  private showWebDailyEnd(): void {
+    if (this.webDailyEnd) return;
+    const t = theme();
+    const sheet = this.add.container(0, 0).setDepth(90);
+
+    const dim = this.add
+      .rectangle(BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_WIDTH, BASE_HEIGHT, t.ink, 0.22)
+      .setInteractive();
+    sheet.add(dim);
+
+    const cw = pt(300);
+    const ch = pt(210);
+    const cy = BASE_HEIGHT / 2 - pt(20);
+    const card = this.add.graphics();
+    softShadow(card, BASE_WIDTH / 2 - cw / 2, cy - ch / 2, cw, ch, RADIUS.md, 0.8);
+    card.fillStyle(t.paper, 1);
+    roundRect(card, BASE_WIDTH / 2 - cw / 2, cy - ch / 2, cw, ch, RADIUS.md);
+    sheet.add(card);
+
+    sheet.add(
+      label(this, BASE_WIDTH / 2, cy - ch / 2 + pt(26), 'Folded for today', {
+        size: TYPE.body,
+        font: FONT.display,
+        alpha: 0.85,
+      }).setOrigin(0.5)
+    );
+    sheet.add(
+      label(this, BASE_WIDTH / 2, cy - ch / 2 + pt(48), this.dailyResultText().split('\n')[0], {
+        size: TYPE.label,
+        alpha: 0.5,
+      }).setOrigin(0.5)
+    );
+
+    let rowY = cy - ch / 2 + pt(82);
+    sheet.add(
+      button(this, BASE_WIDTH / 2, rowY, 'Share result', {
+        width: cw - pt(32),
+        height: pt(40),
+        variant: 'secondary',
+        size: TYPE.label,
+        onPress: () => void Share.shareText('Foldwing', this.dailyResultText()),
+      })
+    );
+
+    rowY += pt(48);
+    sheet.add(
+      button(this, BASE_WIDTH / 2, rowY, 'Get the app · 300 more folds', {
+        width: cw - pt(32),
+        height: pt(44),
+        variant: 'primary',
+        size: TYPE.label,
+        onPress: () => window.open(APP_STORE_URL, '_blank'),
+      })
+    );
+
+    rowY += pt(48);
+    sheet.add(
+      button(this, BASE_WIDTH / 2, rowY, 'Fold again', {
+        width: cw - pt(32),
+        height: pt(32),
+        variant: 'ghost',
+        size: TYPE.label,
+        onPress: () => {
+          this.closeWebDailyEnd();
+          this.resetToIdle();
+        },
+      })
+    );
+
+    this.webDailyEnd = sheet;
+  }
+
+  private closeWebDailyEnd(): void {
+    this.webDailyEnd?.destroy(true);
+    this.webDailyEnd = null;
   }
 
   private showSkipOffer(): void {
@@ -535,10 +988,41 @@ export class GameScene extends Phaser.Scene {
     this.skipPill = null;
   }
 
+  /**
+   * The contextual reveal: after a few deaths, point at the mechanic the
+   * player is losing to. The eye button is passive; this is the game saying
+   * "the walls you keep hitting are on the other side" at the exact moment
+   * that sentence means something.
+   */
+  private showRevealOffer(): void {
+    const y = BASE_HEIGHT - METRICS.bannerReserve - pt(34);
+    this.revealOfferPill = button(this, BASE_WIDTH / 2, y, 'See the folded walls?', {
+      width: pt(230),
+      height: pt(40),
+      variant: 'secondary',
+      size: TYPE.label,
+      onPress: () => {
+        this.clearRevealOffer();
+        void this.doReveal();
+      },
+    });
+    this.revealOfferPill.setAlpha(0);
+    this.tweens.add({ targets: this.revealOfferPill, alpha: 1, duration: 300 });
+  }
+
+  private clearRevealOffer(): void {
+    if (!this.revealOfferPill) return;
+    this.tweens.killTweensOf(this.revealOfferPill);
+    this.revealOfferPill.destroy(true);
+    this.revealOfferPill = null;
+  }
+
   private async doSkip(): Promise<void> {
     Haptics.tap();
-    const earned = await Ads.showRewarded('skip');
-    if (!earned) return;
+    // 'unavailable' skips anyway — this button used to swallow the tap
+    // whenever no ad could load, which on a pre-review AdMob app is always,
+    // and a control that visibly does nothing reads as a broken game.
+    if ((await Ads.showRewarded('skip')) === 'declined') return;
 
     Progress.unlockThrough(this.levelIndex, LEVELS.length);
     this.clearSkipOffer();
@@ -552,21 +1036,25 @@ export class GameScene extends Phaser.Scene {
   private buildHud(): void {
     const t = theme();
 
-    this.add
-      .existing(
-        button(this, METRICS.inset.left + pt(18), pt(26), '‹', {
-          width: pt(46),
-          height: pt(44),
-          variant: 'ghost',
-          size: TYPE.title,
-          onPress: () => {
-            Haptics.tap();
-            void Progress.flush();
-            this.scene.start('Menu');
-          },
-        })
-      )
-      .setDepth(50);
+    // On the web daily the page IS the game — there is no menu behind the
+    // back button, so there is no back button.
+    if (!WEB_DAILY) {
+      this.add
+        .existing(
+          button(this, METRICS.inset.left + pt(18), pt(26), '‹', {
+            width: pt(46),
+            height: pt(44),
+            variant: 'ghost',
+            size: TYPE.title,
+            onPress: () => {
+              Haptics.tap();
+              void Progress.flush();
+              this.scene.start('Menu');
+            },
+          })
+        )
+        .setDepth(50);
+    }
 
     this.titleText = this.add
       .text(BASE_WIDTH / 2, pt(26), '', {
@@ -604,9 +1092,12 @@ export class GameScene extends Phaser.Scene {
   /** "Show me where my reflection dies" — the reward, as a one-tap control. */
   private buildRevealPill(): Phaser.GameObjects.Container {
     const t = theme();
-    const w = pt(74);
+    // Wide enough to SAY what it does. The original was an eye and a number —
+    // legible as "some counter", not as the game's most valuable button. The
+    // word costs pt(22) of width and buys the whole feature its discovery.
+    const w = pt(96);
     const h = pt(34);
-    const c = this.add.container(BASE_WIDTH - METRICS.inset.right - pt(42), pt(26));
+    const c = this.add.container(BASE_WIDTH - METRICS.inset.right - w / 2, pt(26));
     c.setDepth(50);
 
     const g = this.add.graphics();
@@ -616,14 +1107,21 @@ export class GameScene extends Phaser.Scene {
 
     const eye = this.add.graphics();
     eye.lineStyle(pt(1.4), t.accent, 0.85);
-    eye.strokeCircle(-pt(15), 0, pt(5));
+    eye.strokeCircle(-pt(33), 0, pt(5));
     eye.fillStyle(t.accent, 0.85);
-    eye.fillCircle(-pt(15), 0, pt(1.8));
+    eye.fillCircle(-pt(33), 0, pt(1.8));
     c.add(eye);
 
-    this.revealCount = label(this, pt(6), 0, '', {
+    c.add(
+      label(this, -pt(6), 0, 'Reveal', {
+        size: TYPE.label,
+        alpha: 0.75,
+      }).setOrigin(0.5)
+    );
+
+    this.revealCount = label(this, pt(33), 0, '', {
       size: TYPE.label,
-      alpha: 0.6,
+      alpha: 0.55,
     }).setOrigin(0.5);
     c.add(this.revealCount);
 
@@ -663,12 +1161,32 @@ export class GameScene extends Phaser.Scene {
   }
 
   private refreshHud(): void {
-    this.titleText.setText(`${this.levelIndex + 1}. ${this.level.name}`);
-    this.attemptText.setText(this.attempts > 0 ? `attempt ${this.attempts}` : '');
+    this.titleText.setText(
+      this.dailyDate ? this.level.name : `${this.levelIndex + 1}. ${this.level.name}`
+    );
+
+    // On a win the attempt counter's slot becomes the par verdict — one
+    // number that turns every finished level into a score to come back for.
+    // It steps up a type size for the moment, and turns gold with the medal.
+    if (this.phase === 'won' && this.winRatio !== null) {
+      const medal = this.winMedal ? ' · ◆' : '';
+      this.attemptText
+        .setText(`your line ${this.winRatio.toFixed(2)}× par${medal} · Fold Sense ${this.winSense}`)
+        .setFontSize(`${TYPE.label}px`)
+        .setColor(this.winMedal ? 'rgba(176,138,32,0.9)' : 'rgba(22,50,60,0.5)');
+    } else {
+      this.attemptText
+        .setText(this.attempts > 0 ? `attempt ${this.attempts}` : '')
+        .setFontSize(`${TYPE.micro}px`)
+        .setColor('rgba(22,50,60,0.32)');
+    }
 
     const n = Progress.reveals;
     this.revealCount.setText(n === Number.POSITIVE_INFINITY ? '∞' : `${n}`);
-    this.revealPill.setAlpha(n > 0 || Ads.rewardedAvailable ? 1 : 0.35);
+    // Dim only when the stash is empty AND there is no way to fill it — the
+    // pack counts, so an empty stash still reads as live wherever it is buyable.
+    const refillable = Ads.rewardedAvailable || Iap.available;
+    this.revealPill.setAlpha(n > 0 || refillable ? 1 : 0.35);
   }
 
   private showHint(message: string, delay: number): void {
@@ -686,6 +1204,18 @@ export class GameScene extends Phaser.Scene {
   private hideHint(): void {
     this.tweens.killTweensOf(this.hintText);
     this.hintText.setAlpha(0);
+  }
+
+  /**
+   * A hint that answers a tap, so it appears at once and takes itself away.
+   * `resetToIdle` would clear it eventually, but only on the next stroke —
+   * a reply to a button press should not outlive the player's interest in it.
+   */
+  private flashHint(message: string): void {
+    this.showHint(message, 0);
+    this.time.delayedCall(3200, () => {
+      if (this.phase !== 'won') this.hideHint();
+    });
   }
 
   /* ------------------------------------------------------------------ dev */

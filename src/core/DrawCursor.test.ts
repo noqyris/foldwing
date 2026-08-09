@@ -3,11 +3,14 @@ import { drawCursor } from './DrawCursor';
 import { vec2 } from './Geometry';
 import { METRICS, pt } from '../render/Theme';
 
+// The shipped geometry: 84px of lift gained across 120px of finger travel.
+// The ratio matters — tests below assert the launch is gentler than the
+// finger, which only holds while offsetY stays below ~1.9 × rampPx.
 const OPTS = {
   touch: true,
   travelPx: 1000,
   offsetY: 84,
-  rampPx: 42,
+  rampPx: 120,
 };
 
 describe('drawCursor', () => {
@@ -57,18 +60,38 @@ describe('drawCursor', () => {
     for (const travelPx of [0, 0, 0]) {
       expect(drawCursor(still, { ...OPTS, travelPx }).y).toBe(500);
     }
-    // Jitter in place stays effectively pinned, too.
-    expect(drawCursor(still, { ...OPTS, travelPx: 0.4 }).y).toBeCloseTo(499.2, 9);
+    // Jitter in place stays effectively pinned, too — smoothstep's zero slope
+    // at the origin means sub-pixel travel produces sub-hundredth-pixel lift.
+    expect(drawCursor(still, { ...OPTS, travelPx: 0.4 }).y).toBeCloseTo(500, 2);
   });
 
-  it('eases the offset in linearly across the travel ramp', () => {
-    expect(drawCursor(vec2(100, 500), { ...OPTS, travelPx: 10.5 }).y).toBeCloseTo(479, 9);
-    expect(drawCursor(vec2(100, 500), { ...OPTS, travelPx: 21 }).y).toBeCloseTo(458, 9);
-    expect(drawCursor(vec2(100, 500), { ...OPTS, travelPx: 42 }).y).toBeCloseTo(416, 9);
+  /*
+   * Smoothstep, not a line. A linear ramp moves the ink at double finger
+   * speed from the very first millimetre of a stroke, which is how "I died on
+   * the first wall while I was still starting" shipped. Zero slope at the
+   * origin means the stroke initially tracks the finger 1:1.
+   */
+  it('eases the offset along a smoothstep across the travel ramp', () => {
+    const lift = (travelPx: number) => 500 - drawCursor(vec2(100, 500), { ...OPTS, travelPx }).y;
+    // t = 0.25 -> 3t^2 - 2t^3 = 0.15625
+    expect(lift(30)).toBeCloseTo(84 * 0.15625, 9);
+    // Halfway through the ramp the lift is exactly half the offset...
+    expect(lift(60)).toBeCloseTo(42, 9);
+    // ...and the ramp completes at rampPx.
+    expect(lift(120)).toBeCloseTo(84, 9);
+  });
+
+  it('starts gentler than the finger itself — no double-speed launch', () => {
+    // Early in the ramp the manufactured lift stays well under the distance
+    // the finger has actually moved; the old linear ramp broke this.
+    for (const travelPx of [1, 3, 6, 10]) {
+      const lift = 500 - drawCursor(vec2(100, 500), { ...OPTS, travelPx }).y;
+      expect(lift).toBeLessThan(travelPx);
+    }
   });
 
   it('holds the offset steady once the ramp completes', () => {
-    expect(drawCursor(vec2(100, 500), { ...OPTS, travelPx: 43 }).y).toBeCloseTo(416, 9);
+    expect(drawCursor(vec2(100, 500), { ...OPTS, travelPx: 121 }).y).toBeCloseTo(416, 9);
     expect(drawCursor(vec2(100, 500), { ...OPTS, travelPx: 50000 }).y).toBeCloseTo(416, 9);
   });
 
