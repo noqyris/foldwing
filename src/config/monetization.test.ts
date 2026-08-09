@@ -54,16 +54,17 @@ describe('AdMob identifiers', () => {
    * and "remember to change the plist too" is exactly the kind of thing nobody
    * remembers at 1am before a submission. So the build checks it.
    */
-  it('keeps the native app id in step with useTestAds', () => {
-    const native = plistString('GADApplicationIdentifier');
-    expect(native).toMatch(/^ca-app-pub-\d+~\d+$/);
-    expect(native).toBe(admobUnits().appId);
-
-    if (monetization.useTestAds) {
-      expect(native).toBe('ca-app-pub-3940256099942544~1458002511');
-    } else {
-      expect(native).not.toContain('3940256099942544');
-    }
+  it('keeps the native app id in step with the units it resolves', () => {
+    /*
+     * GADApplicationIdentifier is native, read at launch, and used to be edited
+     * by hand — "remember to change the plist too" being exactly the thing
+     * nobody remembers at 1am before a submission. It is a build setting now,
+     * so the pair can only disagree if someone edits one of the two defaults.
+     */
+    const pbx = readFileSync(PBXPROJ, 'utf8');
+    const nativeDefault = /GAD_APPLICATION_IDENTIFIER = "([^"]+)"/.exec(pbx)?.[1] ?? '';
+    expect(nativeDefault).toMatch(/^ca-app-pub-\d+~\d+$/);
+    expect(nativeDefault).toBe(admobUnits().appId);
   });
 
   /*
@@ -71,21 +72,37 @@ describe('AdMob identifiers', () => {
    * passes — and that is exactly how build 19 came to carry Google's test app
    * id inside a signed, uploadable ipa.
    *
-   * This one does not branch on anything. The tree's committed state is the
-   * submission state, so the test publisher id may not appear in the plist at
-   * all. Flip `useTestAds` locally to judge placement if you like; you cannot
-   * commit that flip, and you cannot archive past it.
+   * These do not branch on anything. Neither knob is a checked-in value any
+   * more: `useTestAds` comes from VITE_TEST_ADS at build time and the native id
+   * comes from the GAD_APPLICATION_IDENTIFIER build setting, so a test-ads
+   * build is something you ASK FOR at the archive and cannot leave behind. What
+   * is on disk is always the submission state, and these assert exactly that.
    */
-  it('never leaves Google test ad ids in the native project', () => {
-    const xml = readFileSync(PLIST, 'utf8');
-    expect(xml).not.toContain('3940256099942544');
+  it('never leaves Google test ad ids anywhere in the native project', () => {
+    const plist = readFileSync(PLIST, 'utf8');
+    const pbx = readFileSync(PBXPROJ, 'utf8');
+    expect(plist).not.toContain('3940256099942544');
+    expect(pbx).not.toContain('3940256099942544');
+  });
+
+  it('defaults to live ads when nothing asks for test ads', () => {
+    // VITE_TEST_ADS is unset in a normal run, so this is the shipped default.
     expect(monetization.useTestAds).toBe(false);
   });
 
-  it('ships the live publisher account, not somebody else s', () => {
-    expect(plistString('GADApplicationIdentifier')).toBe(
-      'ca-app-pub-3307486877162157~5033197766'
+  it('ships the live publisher account, from a build setting the plist reads', () => {
+    // The plist holds a reference, not a literal: that is what makes the
+    // test-ads build a one-line xcargs override with nothing left on disk.
+    expect(plistString('GADApplicationIdentifier')).toBe('$(GAD_APPLICATION_IDENTIFIER)');
+
+    const pbx = readFileSync(PBXPROJ, 'utf8');
+    const defaults = [...pbx.matchAll(/GAD_APPLICATION_IDENTIFIER = "([^"]+)"/g)].map(
+      (m) => m[1]
     );
+    // Both configurations, both live. A Debug default that drifted from Release
+    // would mean the simulator and the archive were talking to different apps.
+    expect(defaults.length).toBe(2);
+    for (const d of defaults) expect(d).toBe('ca-app-pub-3307486877162157~5033197766');
   });
 
   it('declares ATT and the SKAdNetwork list the SDK needs', () => {

@@ -1,7 +1,7 @@
 # Shipping Foldwing
 
 App Store Connect app id **6794804195** · bundle `com.noqyris.foldwing` · team
-`YMN45WC2QR`. The Xcode project is at **1.1, build 19** — `MARKETING_VERSION`
+`YMN45WC2QR`. The Xcode project is at **1.1, build 21** — `MARKETING_VERSION`
 and `CURRENT_PROJECT_VERSION` in `ios/App/App.xcodeproj/project.pbxproj`, which
 is the only version fact this repo can prove. What App Store Connect currently
 holds is a different question, and the ledger below is honest about not
@@ -98,9 +98,10 @@ of build 19 it is enforced rather than remembered.
 | 15–18 | **unknown** | not recorded at upload time, and unknowable now |
 | 19 | **TEST when uploaded** | archived with Google's test publisher id in the plist, and the suite green. The tree is back on LIVE — see the guard below |
 | 20 | LIVE | **2026-08-09, uploaded to TestFlight, not submitted.** First build past the guard: live AdMob ids, `NSPhotoLibraryAddUsageDescription`, `PrivacyInfo.xcprivacy`, the v1→v2 save migration, the Daily's ad-grace / decoy / fallback / medal fixes, settings, level-1 onboarding, a campaign ending, and 1228 tests green. Verified by unzipping the ipa, not by trusting the archive |
+| 21 | **TEST** | **2026-08-09, TestFlight only, NEVER SUBMIT.** Same code as 20, archived through `fastlane beta_testads` so the tester can actually SEE the ads — live units no-fill until AdMob reviews a public app. Nothing on disk changed to make it; see below |
 
 **This ledger cannot tell you what is on TestFlight right now.** Nothing in the
-repo can: the Xcode project carries a build number (currently 19), but fastlane
+repo can: the Xcode project carries a build number (currently 21), but fastlane
 derives the real one from App Store Connect at upload time, and nobody wrote
 down what went out for 15 through 18. Rows are not invented here to fill the
 gap — an invented row is worse than a missing one, because a missing row makes
@@ -117,7 +118,8 @@ cannot judge placement at all. That is why a TEST build was ever useful.
 ### The guard, and why build 19 needed one
 
 **Shipping test ads to real users is an AdMob policy violation.** Two knobs
-have to be LIVE together:
+have to be LIVE together — which, until build 19, meant two literals somebody
+had to remember to change back:
 
     src/config/monetization.ts   useTestAds: false
     ios/App/App/Info.plist       GADApplicationIdentifier -> ca-app-pub-3307486877162157~5033197766
@@ -129,19 +131,45 @@ inside a signed, uploadable ipa. "Check this line before every submission" was
 the instruction, and it is the kind of instruction that works right up until
 the night it matters.
 
-The agreement test is still there. Alongside it there is now one that does not
-branch on anything:
+The real fix was to stop either knob being a checked-in value at all. Neither
+is one now:
 
-- `never leaves Google test ad ids in the native project` greps the plist for
-  `3940256099942544` and asserts `useTestAds === false`. Both on TEST is no
-  longer a passing state.
-- `ships the live publisher account, not somebody else s` pins
-  `GADApplicationIdentifier` to the exact live app id, so a plausible-looking
-  wrong publisher fails too.
+    src/config/monetization.ts   useTestAds: import.meta.env.VITE_TEST_ADS === '1'
+    ios/App/App/Info.plist       GADApplicationIdentifier -> $(GAD_APPLICATION_IDENTIFIER)
+    project.pbxproj              GAD_APPLICATION_IDENTIFIER = <the live app id>
 
-Flip `useTestAds` locally whenever you want to judge placement. You cannot
-commit the flip, and `npm test` gates the archive, so you cannot upload past
-it either.
+A test-ads build is therefore something you ASK FOR at the archive and cannot
+leave behind. There is no cleanup step to forget, which matters because
+forgetting the cleanup step is the entire history of this section.
+
+Three tests hold it, none of which branch on anything:
+
+- `never leaves Google test ad ids anywhere in the native project` greps BOTH
+  the plist and the pbxproj for `3940256099942544`.
+- `defaults to live ads when nothing asks for test ads` pins the shipped
+  default of `useTestAds` to false.
+- `ships the live publisher account, from a build setting the plist reads`
+  pins the plist to the reference and both pbxproj defaults to the exact live
+  app id, so a plausible-looking wrong publisher fails too.
+
+### Making a build the tester can see ads in
+
+    npm run ios:sync:testads     # typecheck + full suite + VITE_TEST_ADS=1 + cap sync
+    fastlane beta_testads        # archives with GAD_APPLICATION_IDENTIFIER overridden
+
+The two halves have to agree — the JavaScript picks the ad UNITS, the native id
+picks which AdMob APP the SDK reports to — and they are set by two different
+commands, so `npm run ios:sync:testads` drops a marker at `build/.test-ads`
+(gitignored) and the lanes read it:
+
+- `fastlane beta` **refuses** if the marker is there. A live archive over a
+  test-ads bundle is the mismatch nobody notices until a tester reports blank
+  space.
+- `fastlane beta_testads` **refuses** if it is not.
+
+`npm run ios:sync` clears the marker, so the ordinary path is self-healing.
+After either lane, `git diff ios/` must be empty — check it. That is also how
+the agvtool clobber described under "Build and upload" gets caught.
 
 ## The purchases — there are TWO now
 

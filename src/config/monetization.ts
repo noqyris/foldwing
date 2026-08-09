@@ -99,24 +99,27 @@ const LIVE_ANDROID: AdUnits = {
 
 export const monetization = {
   /**
-   * FALSE is the submission state, and the default.
+   * Google's test units instead of the live ones. FALSE unless the build was
+   * explicitly asked for it, and there is no way to commit it true.
    *
-   * Flipping it to true swaps in Google's test units, which actually render —
-   * useful for judging placement, because a new AdMob app shows "Requires
-   * review / Limited ad serving" until the app is public, so live units
-   * return no-fill and a TestFlight build looks broken.
+   * A TestFlight build needs this. A new AdMob app shows "Requires review /
+   * Limited ad serving" until the app is PUBLIC on the store, so live units
+   * return no-fill and a tester sees blank space where the ads are — they
+   * cannot judge placement or frequency at all, which is the main thing worth
+   * judging before release. Test units render immediately.
    *
-   * If you do flip it, flip `GADApplicationIdentifier` in Info.plist with it
-   * and FLIP BOTH BACK BEFORE ARCHIVING. Shipping Google's test ads to real
-   * users violates AdMob policy, and clicking your own LIVE ads is invalid
-   * traffic — the most common way to get an AdMob account banned.
+   * It is a BUILD-TIME env var, not a checked-in constant, because a checked-in
+   * constant is how build 19 came to carry Google's test ids inside a signed,
+   * uploadable ipa. `npm run ios:sync` cannot produce a test-ads build; only
+   * `npm run ios:sync:testads` can, and it leaves nothing behind on disk that a
+   * later archive could pick up by accident. See `fastlane beta_testads`.
    *
-   * `monetization.test.ts` pins the two together, and — because "both on TEST"
-   * used to be a PASSING state and shipped that way into build 19 — a separate
-   * test now fails outright on Google's test publisher id in the plist,
-   * whatever this flag says.
+   * Shipping test ads to real users violates AdMob policy, and clicking your
+   * own LIVE ads is invalid traffic — the most common way to get an account
+   * banned. Both are prevented by the same property: the tree is always in
+   * submission state.
    */
-  useTestAds: false,
+  useTestAds: import.meta.env.VITE_TEST_ADS === '1',
 
   products: {
     /** Non-consumable. Kills the banner and interstitials, unlocks unlimited reveals. */

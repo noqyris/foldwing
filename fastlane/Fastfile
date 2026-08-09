@@ -65,8 +65,13 @@ platform :ios do
     )
   end
 
+  # Google's test AdMob app id. Passed at archive time by :beta_testads and
+  # never written to disk — the committed default in the pbxproj stays live, and
+  # monetization.test.ts fails if this string ever appears in the project.
+  GAD_TEST_APP_ID = "ca-app-pub-3940256099942544~1458002511"
+
   desc "Archive a signed App Store build"
-  lane :build_ipa do
+  lane :build_ipa do |options|
     key = asc_key
     # Always land above whatever App Store Connect already has: a duplicate
     # build number is rejected after the upload has already been paid for.
@@ -81,7 +86,10 @@ platform :ios do
     # every increment). Xcodeproj touches the build setting and nothing else.
     latest = latest_testflight_build_number(api_key: key, app_identifier: APP_ID) rescue 0
     next_build = latest.to_i + 1
-    project = Xcodeproj::Project.open("ios/App/App.xcodeproj")
+    # Relative to fastlane/, not to the project root: Xcodeproj resolves against
+    # Ruby's cwd, unlike the fastlane actions around it, which resolve against
+    # the root. Mixing the two conventions is a one-line, hard-to-spot break.
+    project = Xcodeproj::Project.open("../ios/App/App.xcodeproj")
     project.build_configurations.each do |c|
       c.build_settings["CURRENT_PROJECT_VERSION"] = next_build.to_s
     end
@@ -109,13 +117,21 @@ platform :ios do
     )
     UI.message("signing with profile: #{profile}")
 
+    # The AdMob app id is a build setting the plist references, so a test-ads
+    # archive overrides it here and leaves the working tree untouched.
+    args = ["-allowProvisioningUpdates"]
+    if options[:test_ads]
+      UI.important("TEST ADS: overriding GAD_APPLICATION_IDENTIFIER for this archive only")
+      args << "GAD_APPLICATION_IDENTIFIER=#{GAD_TEST_APP_ID}"
+    end
+
     build_app(
       workspace: WORKSPACE,
       scheme: SCHEME,
       export_method: "app-store",
       output_directory: "build",
       output_name: "Foldwing.ipa",
-      xcargs: "-allowProvisioningUpdates",
+      xcargs: args.join(" "),
       export_options: {
         signingStyle: "manual",
         teamID: TEAM,
@@ -124,10 +140,43 @@ platform :ios do
     )
   end
 
+  # Which kind of web bundle is currently synced into the native shell.
+  #
+  # The JavaScript half (which ad UNITS to request) and the native half (which
+  # AdMob APP the SDK reports to) have to agree, and they are set by two
+  # different commands. The npm scripts drop or clear this marker so the lane
+  # can refuse a mismatch instead of discovering it after a tester reports
+  # blank space. build/ is gitignored, so it can never be committed.
+  TEST_ADS_MARKER = "../build/.test-ads"
+
   desc "Build and upload to TestFlight"
   lane :beta do
+    if File.exist?(TEST_ADS_MARKER)
+      UI.user_error!("dist/ holds a TEST ADS bundle. Run `npm run ios:sync` for a live build, or `fastlane beta_testads` if test ads were the intent.")
+    end
     build_ipa
     upload_to_testflight(api_key: asc_key, skip_waiting_for_build_processing: true)
+  end
+
+  desc "TestFlight build that SHOWS ADS — test units. Never submit one of these."
+  # Live units return no-fill until AdMob has reviewed the app, and AdMob only
+  # reviews once the app is PUBLIC on the store, so a tester on a live build
+  # sees blank space and cannot judge placement or frequency at all. Test units
+  # render immediately.
+  #
+  # Both halves are overridden for this archive only: VITE_TEST_ADS=1 in the web
+  # bundle (via `npm run ios:sync:testads`) and GAD_APPLICATION_IDENTIFIER on the
+  # xcodebuild command line. Nothing is written to the working tree, so the next
+  # ordinary `fastlane beta` is a submission build again with no cleanup step to
+  # forget — which is the step that was forgotten before build 19.
+  lane :beta_testads do
+    unless File.exist?(TEST_ADS_MARKER)
+      UI.user_error!("dist/ was not built with test ads — run `npm run ios:sync:testads` first")
+    end
+    build_ipa(test_ads: true)
+    upload_to_testflight(api_key: asc_key, skip_waiting_for_build_processing: true)
+    UI.important("Uploaded with TEST ADS — for TestFlight only, never submit it.")
+    UI.important("The working tree is untouched and still submission-ready.")
   end
 
   desc "Re-upload the ipa already in build/ without rebuilding"

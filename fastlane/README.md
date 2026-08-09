@@ -47,6 +47,14 @@ Archive a signed App Store build
 
 Build and upload to TestFlight
 
+### ios beta_testads
+
+```sh
+[bundle exec] fastlane ios beta_testads
+```
+
+TestFlight build that SHOWS ADS — test units. Never submit one of these.
+
 ### ios beta_upload
 
 ```sh
