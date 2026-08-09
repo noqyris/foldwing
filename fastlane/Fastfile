@@ -70,10 +70,28 @@ platform :ios do
     key = asc_key
     # Always land above whatever App Store Connect already has: a duplicate
     # build number is rejected after the upload has already been paid for.
+    #
+    # Written straight into CURRENT_PROJECT_VERSION rather than through
+    # `increment_build_number`. That action shells out to agvtool, which also
+    # rewrites any CFBundleVersion it finds in an Info.plist — including the
+    # `$(CURRENT_PROJECT_VERSION)` reference that is there precisely so the
+    # plist follows the build setting. It clobbered it back to a literal on the
+    # build-20 upload, which would have reintroduced the drift the reference was
+    # added to end (build 19 archived as 19 twice because the literal ignored
+    # every increment). Xcodeproj touches the build setting and nothing else.
     latest = latest_testflight_build_number(api_key: key, app_identifier: APP_ID) rescue 0
-    increment_build_number(
-      xcodeproj: "ios/App/App.xcodeproj", build_number: latest.to_i + 1
-    )
+    next_build = latest.to_i + 1
+    project = Xcodeproj::Project.open("ios/App/App.xcodeproj")
+    project.build_configurations.each do |c|
+      c.build_settings["CURRENT_PROJECT_VERSION"] = next_build.to_s
+    end
+    project.targets.each do |t|
+      t.build_configurations.each do |c|
+        c.build_settings["CURRENT_PROJECT_VERSION"] = next_build.to_s
+      end
+    end
+    project.save
+    UI.message("build number -> #{next_build}")
 
     # Fetch (or create) the App Store profile through the ASC API, then sign
     # MANUALLY against it.

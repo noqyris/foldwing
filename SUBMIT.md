@@ -97,6 +97,7 @@ of build 19 it is enforced rather than remembered.
 | 14 | TEST | the MAZE set — TestFlight only, so the tester can SEE ads |
 | 15–18 | **unknown** | not recorded at upload time, and unknowable now |
 | 19 | **TEST when uploaded** | archived with Google's test publisher id in the plist, and the suite green. The tree is back on LIVE — see the guard below |
+| 20 | LIVE | **2026-08-09, uploaded to TestFlight, not submitted.** First build past the guard: live AdMob ids, `NSPhotoLibraryAddUsageDescription`, `PrivacyInfo.xcprivacy`, the v1→v2 save migration, the Daily's ad-grace / decoy / fallback / medal fixes, settings, level-1 onboarding, a campaign ending, and 1228 tests green. Verified by unzipping the ipa, not by trusting the archive |
 
 **This ledger cannot tell you what is on TestFlight right now.** Nothing in the
 repo can: the Xcode project carries a build number (currently 19), but fastlane
