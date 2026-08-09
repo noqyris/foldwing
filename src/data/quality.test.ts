@@ -7,42 +7,51 @@
  */
 import { describe, expect, it } from 'vitest';
 import { LEVELS } from './levels';
-import type { Level } from './types';
 import { Playfield } from '../core/Playfield';
 import { validateLevel } from '../core/LevelValidator';
 import { BASE_HEIGHT, BASE_WIDTH, METRICS } from '../render/Theme';
 
 const pf = new Playfield(BASE_WIDTH, BASE_HEIGHT, METRICS.inset);
 const OPTS = { cell: 6, hitRadius: METRICS.hitRadius, goalRadius: METRICS.goalRadius };
+const TUTORIAL_COUNT = 5;
 
-describe('no wall is decoration', () => {
+describe('every maze earns its walls', () => {
   /*
-   * Random placement produces obstacles whose constraint is already covered by
-   * something else — most often a far-half wall whose reflection lands inside a
-   * near wall. The player studies it, folds it in their head, and finds it
-   * changes nothing. That is worse than an absent wall: the level promises a
-   * problem that does not exist. 34 of them shipped across 30 levels before the
-   * generator started stripping them.
+   * The old criterion — a wall is inert when removing it changes nothing the
+   * player can REACH — was written for bar levels, where walls take area
+   * away. It is meaningless for a maze: a spanning tree already reaches every
+   * cell, so no maze wall changes reachable area; a maze wall's job is to
+   * make the route LONG and the wrong turns real. So the craft bar moves to
+   * where the craft is:
    *
-   * The bar is strict on purpose — a wall counts as inert only when the player
-   * can reach EXACTLY as much ground without it, so a wall that merely narrows
-   * a corridor is never flagged.
+   *   - the one true route must genuinely wind — well past the straight line
+   *   - most of the ground must be off that route: dead ends to reject
+   *
+   * The winding floor sits a hair under the generator's own gate (1.35 —
+   * lowered when the ramp gained its genuinely gentle 3×5 openers, which
+   * physically cannot wind like a 7×11), measured with the identical
+   * validator configuration. Measured minimum across the shipped set: 1.353.
    */
-  it.each(LEVELS.map((l, i) => [i + 1, l.id] as const))(
-    'level %i (%s) has no wall that changes nothing',
+  it.each(LEVELS.slice(TUTORIAL_COUNT).map((l, i) => [i + 6, l.id] as const))(
+    'level %i (%s) forces a winding route with real decoys',
     (_i, id) => {
       const level = LEVELS.find((l) => l.id === id)!;
-      const base = validateLevel(level, pf, OPTS);
-      expect(base.solvable).toBe(true);
+      const r = validateLevel(level, pf, OPTS);
+      expect(r.solvable).toBe(true);
 
-      for (let k = 0; k < level.walls.length; k++) {
-        const without: Level = { ...level, walls: level.walls.filter((_, j) => j !== k) };
-        const r = validateLevel(without, pf, OPTS);
-        expect(
-          r.solvable && r.reachable === base.reachable,
-          `${id} wall ${k} is inert — removing it changes nothing the player can reach`
-        ).toBe(false);
+      let arc = 0;
+      for (let k = 1; k < r.path.length; k++) {
+        arc += Math.hypot(r.path[k].x - r.path[k - 1].x, r.path[k].y - r.path[k - 1].y);
       }
+      const s = pf.toScreen(level.start);
+      const g = pf.toScreen(level.goal);
+      const winding = arc / Math.max(1, Math.hypot(g.x - s.x, g.y - s.y));
+      expect(winding, `${id} plays as a near-straight corridor`).toBeGreaterThan(1.34);
+
+      // The route must not have the run of the place: most free ground is
+      // decoy corridors. (Line-over-area, so the bar is naturally high — the
+      // assertion is that it stays high for EVERY level.)
+      expect(1 - r.path.length / r.reachable, `${id} has nothing to explore`).toBeGreaterThan(0.85);
     }
   );
 });
@@ -67,7 +76,17 @@ describe('the set does not repeat itself', () => {
 });
 
 describe('geometry reads as intentional', () => {
-  it('never overlaps two walls into a single blob', () => {
+  it('never overlaps two walls beyond a deliberate joint patch', () => {
+    /*
+     * Maze walls EXTEND into each other at junctions — flush abutment left a
+     * rounded-corner seam at every T-joint, visible as a hairline split in
+     * the labyrinth. The walls render opaque, so the overlap is invisible;
+     * what stays forbidden is any overlap LARGER than one joint patch
+     * (roughly thickness × thickness), which would mean two walls lying
+     * along each other — a generator bug, not a joint.
+     */
+    const JOINT_X = 0.034; // max wall thickness in x, plus margin
+    const JOINT_Y = 0.028; // max wall thickness in y, plus margin
     for (const l of LEVELS) {
       for (let i = 0; i < l.walls.length; i++) {
         for (let k = i + 1; k < l.walls.length; k++) {
@@ -75,7 +94,11 @@ describe('geometry reads as intentional', () => {
           const b = l.walls[k];
           const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
           const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
-          expect(ox > 1e-6 && oy > 1e-6, `${l.id} walls ${i} and ${k} overlap`).toBe(false);
+          const overlapping = ox > 1e-6 && oy > 1e-6;
+          expect(
+            overlapping && (ox > JOINT_X || oy > JOINT_Y),
+            `${l.id} walls ${i} and ${k} overlap beyond a joint (${ox.toFixed(3)}×${oy.toFixed(3)})`
+          ).toBe(false);
         }
       }
     }

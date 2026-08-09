@@ -53,18 +53,30 @@ export class CollisionSystem {
    * wall or the goal came first when a single long segment reaches both.
    */
   firstHitT(a: Vec2, b: Vec2): number | null {
+    return this.firstHit(a, b)?.t ?? null;
+  }
+
+  /**
+   * Like firstHitT, but says WHICH stroke died: the one the player draws, or
+   * its reflection. The distinction is the game's own skill axis — a mirror
+   * death means the half they were not looking at killed them — and it is
+   * what Fold Sense measures.
+   */
+  firstHit(a: Vec2, b: Vec2): { t: number; mirror: boolean } | null {
     const ma = mirrorPoint(a, this.axisX);
     const mb = mirrorPoint(b, this.axisX);
 
-    let earliest: number | null = null;
+    let earliest: { t: number; mirror: boolean } | null = null;
 
     for (const wall of this.walls) {
       const own = segRectEntryT(a, b, wall, this.hitRadius);
-      if (own !== null && (earliest === null || own < earliest)) earliest = own;
+      if (own !== null && (earliest === null || own < earliest.t)) {
+        earliest = { t: own, mirror: false };
+      }
 
       const reflected = segRectEntryT(ma, mb, wall, this.hitRadius);
-      if (reflected !== null && (earliest === null || reflected < earliest)) {
-        earliest = reflected;
+      if (reflected !== null && (earliest === null || reflected < earliest.t)) {
+        earliest = { t: reflected, mirror: true };
       }
     }
 

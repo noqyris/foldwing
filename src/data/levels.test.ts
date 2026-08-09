@@ -7,9 +7,7 @@ import {
   clearance,
   difficulty,
   interlock,
-  interlockBands,
   PLAYABLE_CLEARANCE,
-  pressure,
   validateLevel,
 } from '../core/LevelValidator';
 import { BASE_HEIGHT, BASE_WIDTH, METRICS } from '../render/Theme';
@@ -22,10 +20,10 @@ const OPTS = {
 };
 
 describe('level set', () => {
-  it('ships 100 levels, tutorial first', () => {
+  it('ships 300 levels, tutorial first', () => {
     expect(TUTORIAL_LEVELS.length).toBe(5);
-    expect(GENERATED_LEVELS.length).toBe(95);
-    expect(LEVELS.length).toBe(100);
+    expect(GENERATED_LEVELS.length).toBe(295);
+    expect(LEVELS.length).toBe(300);
     expect(LEVELS[0].id).toBe('l1');
   });
 
@@ -155,8 +153,14 @@ describe('playability', () => {
   it('measures real slack on the tightest level, not just a pass', () => {
     // Guards the guard: if `clearance` ever stopped discriminating, every
     // level would trivially "pass" the check above.
+    //
+    // `clearance` is a 7-step binary search and returns its LOWER bound, so it
+    // understates the true slack by up to 34/2^7 ≈ 0.27px. The exact proof at
+    // PLAYABLE_CLEARANCE is the per-level test above; this one only has to
+    // agree with it to within the search's own resolution.
+    const quantization = 34 / 2 ** 7;
     const tightest = LEVELS.map((l) => clearance(l, pf, OPTS)).sort((a, b) => a - b)[0];
-    expect(tightest).toBeGreaterThanOrEqual(PLAYABLE_CLEARANCE);
+    expect(tightest).toBeGreaterThanOrEqual(PLAYABLE_CLEARANCE - quantization);
     // The set should still contain genuinely tight levels; if the minimum ran
     // away upwards the hard end has quietly gone soft.
     expect(tightest).toBeLessThan(PLAYABLE_CLEARANCE * 3);
@@ -201,12 +205,18 @@ describe('the mirror has to matter', () => {
 });
 
 describe('difficulty ramp', () => {
-  const scores = LEVELS.map((l) => pressure(l, pf));
-
+  /*
+   * These used to assert on `pressure`. Pressure is blocked AREA, and a maze
+   * is thin walls around big rooms — the hardest maze in the set measures
+   * ~0.29 where a mid-table bar level measured 0.4. The statistic stopped
+   * describing the thing the assertions are about, so the assertions now use
+   * `difficulty()` — the actual sort key — and pressure stays what the
+   * validator says it is: a descriptive number.
+   */
   it('rises overall from the first level to the last', () => {
-    const firstTen = scores.slice(0, 10).reduce((a, b) => a + b, 0) / 10;
-    const lastTen = scores.slice(-10).reduce((a, b) => a + b, 0) / 10;
-    expect(lastTen).toBeGreaterThan(firstTen * 1.8);
+    const mean = (ls: readonly Level[]): number =>
+      ls.reduce((a, l) => a + difficulty(l, pf), 0) / ls.length;
+    expect(mean(LEVELS.slice(-10))).toBeGreaterThan(mean(LEVELS.slice(0, 10)) * 1.5);
   });
 
   /*
@@ -237,10 +247,21 @@ describe('difficulty ramp', () => {
     expect(mean(last, (l) => clearance(l, pf, OPTS))).toBeLessThan(
       mean(first, (l) => clearance(l, pf, OPTS)) * 0.6
     );
-    // Mirror demand rises: more heights squeezed from both halves at once.
-    expect(mean(last, (l) => interlockBands(l))).toBeGreaterThan(
-      mean(first, (l) => interlockBands(l)) * 1.4
-    );
+    // Planning demand rises: the one true route winds further past the
+    // straight line. (Interlock BANDS do not ramp in a maze set — every maze
+    // squeezes from both halves at most heights — so the count would be a
+    // saturated, meaningless axis here.)
+    const winding = (l: Level): number => {
+      const r = validateLevel(l, pf, OPTS);
+      let arc = 0;
+      for (let k = 1; k < r.path.length; k++) {
+        arc += Math.hypot(r.path[k].x - r.path[k - 1].x, r.path[k].y - r.path[k - 1].y);
+      }
+      const s = pf.toScreen(l.start);
+      const g = pf.toScreen(l.goal);
+      return arc / Math.max(1, Math.hypot(g.x - s.x, g.y - s.y));
+    };
+    expect(mean(last, winding)).toBeGreaterThan(mean(first, winding) * 1.25);
   });
 
   it('has no cliff — no ten-level band doubles the precision demand', () => {
@@ -256,7 +277,7 @@ describe('difficulty ramp', () => {
   });
 
   it('opens gently and ends demanding', () => {
-    expect(scores[0]).toBeLessThan(0.12);
-    expect(scores[scores.length - 1]).toBeGreaterThan(0.4);
+    expect(difficulty(LEVELS[0], pf)).toBeLessThan(0.35);
+    expect(difficulty(LEVELS[LEVELS.length - 1], pf)).toBeGreaterThan(0.62);
   });
 });

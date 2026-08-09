@@ -26,3 +26,9 @@ fastlane/report.xml
 fastlane/Preview.html
 *.p8
 *.mobileprovision
+
+# web-daily build output
+dist-daily/
+
+# scratch audit scripts
+scripts/_audit_*.ts

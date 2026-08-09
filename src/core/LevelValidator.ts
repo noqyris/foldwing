@@ -266,7 +266,13 @@ export function interlockBands(level: Level, samples = 600): number {
  *           whole verb is "draw accurately", this is the sharpest single knob.
  *   mirror  how often, and how much, both halves squeeze at the same height —
  *           the skill unique to this game.
- *   plan    how many decisions the route contains before you commit to it.
+ *   plan    how much thinking the maze demands before the hand commits: how
+ *           far the one true route winds past the straight line, and how much
+ *           of the reachable ground is decoy corridors that dead-end. Both
+ *           are read off the validator's own BFS, so the number stays honest
+ *           for any wall arrangement. (An earlier version counted walls and
+ *           direction reversals; maze levels saturated both, and a sort key
+ *           that saturates stops sorting.)
  *
  * Deliberately ABSOLUTE rather than normalised across a candidate pool, so the
  * generator and the test suite compute the same number and a shipped set can be
@@ -278,20 +284,58 @@ export function difficulty(level: Level, pf: Playfield): number {
   // ~40px of slack is as open as this playfield gets; 0 is impossible.
   const tight = clamp01(1 - clearance(level, pf) / 40);
 
-  const bands = clamp01(interlockBands(level) / 4);
+  // Maze levels put both halves to work at five to eight distinct heights;
+  // the old /4 came from bar levels and saturated, and a saturated axis
+  // stops sorting.
+  const bands = clamp01(interlockBands(level) / 7);
   const mirror = 0.5 * bands + 0.5 * clamp01(interlock(level) / 0.6);
 
   const route = validateLevel(level, pf);
-  let turns = 0;
-  let dir = 0;
-  for (let i = 1; i < route.path.length; i++) {
-    const d = Math.sign(route.path[i].x - route.path[i - 1].x);
-    if (d !== 0 && dir !== 0 && d !== dir) turns++;
-    if (d !== 0) dir = d;
+  let plan = 0;
+  if (route.solvable && route.path.length > 1) {
+    let arc = 0;
+    for (let i = 1; i < route.path.length; i++) {
+      arc += Math.hypot(
+        route.path[i].x - route.path[i - 1].x,
+        route.path[i].y - route.path[i - 1].y
+      );
+    }
+    const s = pf.toScreen(level.start);
+    const g = pf.toScreen(level.goal);
+    const direct = Math.max(1, Math.hypot(g.x - s.x, g.y - s.y));
+    // A route 3.5× the straight line is as windy as this playfield gets.
+    // (Decoy mass is NOT an axis here: measured off the validator grid it is
+    // line-length over area and reads ~0.95 for every maze — no dynamic
+    // range. The generator gates decoys from the spanning tree instead,
+    // where the number is real.)
+    plan = clamp01((arc / direct - 1) / 2.5);
   }
-  const plan = 0.5 * clamp01(level.walls.length / 14) + 0.5 * clamp01(turns / 10);
 
-  return 0.4 * tight + 0.35 * mirror + 0.25 * plan;
+  return 0.35 * tight + 0.3 * mirror + 0.35 * plan;
+}
+
+/**
+ * Arc length of the proved route and the straight-line distance it beats.
+ *
+ * One definition, used everywhere a route is judged: the generator's winding
+ * gate, the quality suite's re-check, the daily fold's acceptance loop, and
+ * the par a win is measured against. Splitting these invited the bug where
+ * the generator accepted what the test then refused.
+ */
+export function routeArc(
+  level: Level,
+  pf: Playfield,
+  opts: ValidatorOptions = {}
+): { arc: number; direct: number } | null {
+  const r = validateLevel(level, pf, opts);
+  if (!r.solvable || r.path.length < 2) return null;
+  let arc = 0;
+  for (let i = 1; i < r.path.length; i++) {
+    arc += Math.hypot(r.path[i].x - r.path[i - 1].x, r.path[i].y - r.path[i - 1].y);
+  }
+  const s = pf.toScreen(level.start);
+  const g = pf.toScreen(level.goal);
+  return { arc, direct: Math.max(1, Math.hypot(g.x - s.x, g.y - s.y)) };
 }
 
 /**

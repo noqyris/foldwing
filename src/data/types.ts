@@ -31,4 +31,10 @@ export interface Level {
   readonly walls: readonly Rect[];
   /** Target completion time, for a later "par" display. Not used yet. */
   readonly parMs?: number;
+  /**
+   * Arc length of the validator's proved route, in base pixels — the par a
+   * winning line is measured against. Generated levels carry it precomputed;
+   * for hand-authored ones it is computed on first win.
+   */
+  readonly parPx?: number;
 }
