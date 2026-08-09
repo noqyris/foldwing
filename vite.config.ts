@@ -17,5 +17,15 @@ export default defineConfig({
     // node environment is enough. Phaser is never imported by a test.
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    /*
+     * Pinned to a non-UTC zone on purpose.
+     *
+     * The Daily Fold rolls over at the player's LOCAL midnight and the reveal
+     * top-up used to roll over at UTC's — the whole point of the tests around
+     * CalendarDay is that those two differ. On a UTC runner they do not, so the
+     * assertions that catch the bug pass vacuously. Belgrade is the author's
+     * zone and has DST, which the shiftISO tests also want.
+     */
+    env: { TZ: 'Europe/Belgrade' },
   },
 });

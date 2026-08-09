@@ -19,6 +19,38 @@ const OPTS = {
   goalRadius: METRICS.goalRadius,
 };
 
+/*
+ * Memoized, because these two are the whole cost of this file.
+ *
+ * `clearance` is a seven-step binary search that runs a full BFS at each step,
+ * and `difficulty` is not cheap either. Six tests below each mapped one of them
+ * across all 300 levels, recomputing from scratch every time: measured, the
+ * three ramp tests alone took 356 of the suite's 405 seconds, for numbers that
+ * are a pure function of a level that never changes during a run.
+ *
+ * Keyed by level id, which the suite already proves unique.
+ */
+const clearanceCache = new Map<string, number>();
+const difficultyCache = new Map<string, number>();
+
+function slack(l: Level): number {
+  let v = clearanceCache.get(l.id);
+  if (v === undefined) {
+    v = clearance(l, pf, OPTS);
+    clearanceCache.set(l.id, v);
+  }
+  return v;
+}
+
+function hardness(l: Level): number {
+  let v = difficultyCache.get(l.id);
+  if (v === undefined) {
+    v = difficulty(l, pf);
+    difficultyCache.set(l.id, v);
+  }
+  return v;
+}
+
 describe('level set', () => {
   it('ships 300 levels, tutorial first', () => {
     expect(TUTORIAL_LEVELS.length).toBe(5);
@@ -159,7 +191,7 @@ describe('playability', () => {
     // PLAYABLE_CLEARANCE is the per-level test above; this one only has to
     // agree with it to within the search's own resolution.
     const quantization = 34 / 2 ** 7;
-    const tightest = LEVELS.map((l) => clearance(l, pf, OPTS)).sort((a, b) => a - b)[0];
+    const tightest = LEVELS.map(slack).sort((a, b) => a - b)[0];
     expect(tightest).toBeGreaterThanOrEqual(PLAYABLE_CLEARANCE - quantization);
     // The set should still contain genuinely tight levels; if the minimum ran
     // away upwards the hard end has quietly gone soft.
@@ -215,7 +247,7 @@ describe('difficulty ramp', () => {
    */
   it('rises overall from the first level to the last', () => {
     const mean = (ls: readonly Level[]): number =>
-      ls.reduce((a, l) => a + difficulty(l, pf), 0) / ls.length;
+      ls.reduce((a, l) => a + hardness(l), 0) / ls.length;
     expect(mean(LEVELS.slice(-10))).toBeGreaterThan(mean(LEVELS.slice(0, 10)) * 1.5);
   });
 
@@ -230,7 +262,7 @@ describe('difficulty ramp', () => {
    * descriptive statistic, in aggregate, where it is honest.
    */
   it('never steps backwards within the generated set', () => {
-    const gen = GENERATED_LEVELS.map((l) => difficulty(l, pf));
+    const gen = GENERATED_LEVELS.map(hardness);
     for (let i = 1; i < gen.length; i++) {
       expect(gen[i], `${GENERATED_LEVELS[i].id} is easier than the one before`)
         .toBeGreaterThanOrEqual(gen[i - 1] - 1e-9);
@@ -244,9 +276,7 @@ describe('difficulty ramp', () => {
       ls.reduce((a, l) => a + f(l), 0) / ls.length;
 
     // Precision demand rises: the tightest corridor gets tighter.
-    expect(mean(last, (l) => clearance(l, pf, OPTS))).toBeLessThan(
-      mean(first, (l) => clearance(l, pf, OPTS)) * 0.6
-    );
+    expect(mean(last, slack)).toBeLessThan(mean(first, slack) * 0.6);
     // Planning demand rises: the one true route winds further past the
     // straight line. (Interlock BANDS do not ramp in a maze set — every maze
     // squeezes from both halves at most heights — so the count would be a
@@ -268,7 +298,7 @@ describe('difficulty ramp', () => {
     // A jump from 25px of slack to 13px in one step reads as the game breaking,
     // not as the game getting harder. That shipped once.
     const band = (a: number) =>
-      LEVELS.slice(a, a + 10).reduce((x, l) => x + clearance(l, pf, OPTS), 0) / 10;
+      LEVELS.slice(a, a + 10).reduce((x, l) => x + slack(l), 0) / 10;
     for (let a = 10; a + 10 <= LEVELS.length; a += 10) {
       const prev = band(a - 10);
       const cur = band(a);
@@ -277,7 +307,7 @@ describe('difficulty ramp', () => {
   });
 
   it('opens gently and ends demanding', () => {
-    expect(difficulty(LEVELS[0], pf)).toBeLessThan(0.35);
-    expect(difficulty(LEVELS[LEVELS.length - 1], pf)).toBeGreaterThan(0.62);
+    expect(hardness(LEVELS[0])).toBeLessThan(0.35);
+    expect(hardness(LEVELS[LEVELS.length - 1])).toBeGreaterThan(0.62);
   });
 });

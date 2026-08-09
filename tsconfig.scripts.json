@@ -1,0 +1,16 @@
+{
+  /*
+   * scripts/ was excluded from `npm run typecheck` and from `npm run build`, so
+   * the level generator — the program that WRITES the shipped content — was the
+   * one piece of TypeScript in the repo nothing type-checked. It runs under
+   * tsx, needs node globals rather than vite/client, and imports from src, so
+   * it gets its own project rather than being folded into the main one.
+   */
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Both: the scripts need node globals, and the src modules they import
+    // reference import.meta.env, which is vite/client's.
+    "types": ["node", "vite/client"]
+  },
+  "include": ["scripts", "src"]
+}

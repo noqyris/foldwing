@@ -243,10 +243,31 @@ function coerce(raw: unknown): SaveData {
    */
   const stale = version < SCHEMA;
 
+  /*
+   * Entry-level coercion, not just container-level.
+   *
+   * `daily` validates every value it keeps; `bestMs` used to check only that
+   * the map was an object, so a stored `{ l1: 'fast' }` or `{ l1: NaN }` went
+   * straight through to the code that formats it as a time. Untrusted input is
+   * untrusted all the way down.
+   */
+  const bestMs: Record<string, number> = {};
+  if (!stale && typeof r.bestMs === 'object' && r.bestMs !== null) {
+    for (const [id, v] of Object.entries(r.bestMs as Record<string, unknown>)) {
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 0) bestMs[id] = v;
+    }
+  }
+
   return {
-    version: SCHEMA,
+    /*
+     * Never stamped DOWN. A save written by a newer build carries level ids
+     * that mean whatever that build meant by them; rewriting the number to
+     * SCHEMA would make a future v2→v3 migration silently skip this player,
+     * which is the same class of bug the v1→v2 migration exists to fix.
+     */
+    version: Math.max(version, SCHEMA),
     unlockedIndex: count(r.unlockedIndex, base.unlockedIndex),
-    bestMs: !stale && typeof r.bestMs === 'object' && r.bestMs !== null ? r.bestMs : base.bestMs,
+    bestMs,
     cleared:
       !stale && Array.isArray(r.cleared)
         ? r.cleared.filter((c) => typeof c === 'string')

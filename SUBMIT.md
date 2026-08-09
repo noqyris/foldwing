@@ -1,12 +1,20 @@
 # Shipping Foldwing
 
 App Store Connect app id **6794804195** · bundle `com.noqyris.foldwing` · team
-`YMN45WC2QR` · version record **1.0** (`PREPARE_FOR_SUBMISSION`).
+`YMN45WC2QR`. The Xcode project is at **1.1, build 19** — `MARKETING_VERSION`
+and `CURRENT_PROJECT_VERSION` in `ios/App/App.xcodeproj/project.pbxproj`, which
+is the only version fact this repo can prove. What App Store Connect currently
+holds is a different question, and the ledger below is honest about not
+answering it.
 
-## Where the 1.0 submission stands
+> **Do not press Submit.** Nothing in this file is an instruction to submit.
+> The author decides when, and will say so. Everything here is preparation.
+
+## Where the listing stands
 
 Everything below was set through the App Store Connect API and verified by
-reading it back, not from memory.
+reading it back at 1.0 time, not from memory — and not re-read since, so treat
+it as the last known good state rather than as today's.
 
 | | |
 |---|---|
@@ -19,7 +27,8 @@ reading it back, not from memory.
 | Categories | Games → Puzzle, Casual · secondary Entertainment |
 | Age rating | **4+** |
 | Screenshots | 4 × 6.7" (1290×2796) uploaded |
-| Ad units | **LIVE** in build 11 — see the table below |
+| In-app purchases | `…removeads` (non-consumable) and `…reveals20` (consumable) |
+| Ad units | **LIVE** in the tree, and now guarded — see below |
 
 ### Still to do by hand — FOUR THINGS, IN THIS ORDER
 
@@ -34,7 +43,9 @@ has no price of any kind. A free app still needs an explicit price schedule.
 
 **2. Availability — choose territories.** `appAvailabilityV2` also returns 404.
 *Pricing and Availability → Availability → All countries.*
-(The IAP already has all 175; the app itself has none.)
+(Remove Ads already has all 175; the app itself has none. Check `reveals20`
+separately — territories are per product, and a product can look ready with
+none set. See the purchases section.)
 
 **3. App Privacy.** Answer: 
 
@@ -48,25 +59,34 @@ nothing anywhere; every one of those answers describes what **Google AdMob**
 does inside the app, which is why the privacy policy names AdMob explicitly.
 The label and the policy have to agree or review bounces it.
 
-**4. Submit.** The build is already attached (build 11) and the release type is
-already **MANUAL**, so approval will not auto-publish — you pick the moment.
-Answer export compliance (**no** non-exempt encryption) when prompted.
+**4. Submit — NOT YET, AND NOT BY ANYONE BUT THE AUTHOR.** This step is written
+down for completeness. It is not a task, it is not the last box on a checklist
+somebody else may tick, and no other piece of work implies it. The author will
+say when. When that day comes: attach the build, confirm the release type is
+still **MANUAL** so approval cannot auto-publish, and answer export compliance
+(**no** non-exempt encryption — `ITSAppUsesNonExemptEncryption` is already
+`false` in `Info.plist`, which is what keeps the question off the upload).
 
-### Before you submit: the purchase has never been run
+### Before you submit: neither purchase has ever been run
 
-Nobody has completed a sandbox purchase. App Review tests in-app purchases, so
-a failure there is a rejection and a lost cycle. Three separate defects were
-found and fixed in that path in one afternoon — the product had zero
-territories, StoreKit asked for an Apple Account at startup, and a silent
-restore on launch put a repeating sign-in dialog over the home screen. Every
-one of them surfaced by running it, none by reading it.
+Nobody has completed a sandbox purchase — not Remove Ads, and not the reveal
+pack, which is newer and has therefore been run even less. App Review tests
+in-app purchases, so a failure there is a rejection and a lost cycle. Three
+separate defects were found and fixed in that path in one afternoon — the
+product had zero territories, StoreKit asked for an Apple Account at startup,
+and a silent restore on launch put a repeating sign-in dialog over the home
+screen. Every one of them surfaced by running it, none by reading it.
 
-Five minutes on build 10 with a Sandbox Apple ID covers what a reviewer will
-do: buy, confirm ads stop, delete, reinstall, restore, relaunch twice.
+Five minutes on a TestFlight build with a Sandbox Apple ID covers what a
+reviewer will do: buy Remove Ads, confirm the banner and interstitials stop and
+reveals go unlimited; buy the reveal pack from the out-of-reveals sheet and
+confirm the stash goes up by 20; then delete, reinstall, restore, and relaunch
+twice with no repeat sign-in prompt.
 
 ## Ad units: which build is which
 
-The tree is currently on **LIVE** units — this is the submission state.
+The tree is currently on **LIVE** units — this is the submission state, and as
+of build 19 it is enforced rather than remembered.
 
 | build | units | for |
 |---|---|---|
@@ -74,26 +94,85 @@ The tree is currently on **LIVE** units — this is the submission state.
 | 11 | LIVE | shipped in the 1.0 that is READY_FOR_SALE |
 | 12 | LIVE | attached to the 1.1 review submission (100 hardened levels) |
 | 13 | LIVE | the 300-bar-level set + menu fix — TestFlight |
-| 14 | TEST | the MAZE set — TestFlight only, so the tester can SEE ads. **Flip both knobs back to LIVE before any App Store submission.** |
+| 14 | TEST | the MAZE set — TestFlight only, so the tester can SEE ads |
+| 15–18 | **unknown** | not recorded at upload time, and unknowable now |
+| 19 | **TEST when uploaded** | archived with Google's test publisher id in the plist, and the suite green. The tree is back on LIVE — see the guard below |
+
+**This ledger cannot tell you what is on TestFlight right now.** Nothing in the
+repo can: the Xcode project carries a build number (currently 19), but fastlane
+derives the real one from App Store Connect at upload time, and nobody wrote
+down what went out for 15 through 18. Rows are not invented here to fill the
+gap — an invented row is worse than a missing one, because a missing row makes
+you go and look. Go and look: App Store Connect → TestFlight → Builds.
+
+**From now on the ledger is updated at upload time, in the same commit as the
+version bump.** A row written afterwards is a row written from memory, and the
+whole point of this table is that memory is what failed.
 
 Live units barely fill until AdMob has reviewed the app, and AdMob only reviews
 once the app is public — so a tester on a live build sees blank space and
-cannot judge placement at all. That is why both builds exist.
+cannot judge placement at all. That is why a TEST build was ever useful.
 
-**Shipping test ads to real users is an AdMob policy violation.** The two knobs
-that must always agree, and must both be LIVE for any submission:
+### The guard, and why build 19 needed one
+
+**Shipping test ads to real users is an AdMob policy violation.** Two knobs
+have to be LIVE together:
 
     src/config/monetization.ts   useTestAds: false
     ios/App/App/Info.plist       GADApplicationIdentifier -> ca-app-pub-3307486877162157~5033197766
 
-`monetization.test.ts` reads the plist and fails if the two disagree, so they
-cannot drift apart — but nothing stops both being left on TEST. Check this line
-before every submission.
+The old check in `monetization.test.ts` only proved the two knobs **agreed**.
+Both on TEST agree perfectly, so the suite stayed green, and that is exactly
+how build 19 came to carry Google's test publisher id — `3940256099942544` —
+inside a signed, uploadable ipa. "Check this line before every submission" was
+the instruction, and it is the kind of instruction that works right up until
+the night it matters.
 
-## The Remove Ads purchase
+The agreement test is still there. Alongside it there is now one that does not
+branch on anything:
 
-**It is now wired and in the build.** `cordova-plugin-purchase` drives StoreKit
-and the whole store surface lives in `systems/Iap.ts`; the scenes are unchanged.
+- `never leaves Google test ad ids in the native project` greps the plist for
+  `3940256099942544` and asserts `useTestAds === false`. Both on TEST is no
+  longer a passing state.
+- `ships the live publisher account, not somebody else s` pins
+  `GADApplicationIdentifier` to the exact live app id, so a plausible-looking
+  wrong publisher fails too.
+
+Flip `useTestAds` locally whenever you want to judge placement. You cannot
+commit the flip, and `npm test` gates the archive, so you cannot upload past
+it either.
+
+## The purchases — there are TWO now
+
+    com.noqyris.foldwing.removeads   non-consumable, $0.99, family-shareable
+    com.noqyris.foldwing.reveals20   consumable, 20 reveals
+
+Both ids live in `src/config/monetization.ts` under `monetization.products`,
+and the store surface for both is `systems/Iap.ts`.
+
+`reveals20` is newer than most of this file and is easy to forget, because
+Remove Ads is the one everybody remembers. Each of these has to be done for it
+as well as for Remove Ads, in App Store Connect:
+
+- the product exists and is **Ready to Submit** — a consumable that is merely
+  *Ready for Review* is not the same state and does not ship
+- **territories**: all 175, explicitly. A product can report Ready to Submit
+  with zero territories set — App Store Connect does not treat that as missing,
+  and it would be unpurchasable everywhere. This happened once already
+- **pricing** set on the consumable in its own right; it does not inherit
+  anything from the non-consumable
+- a **review screenshot** and review notes on each product, or the submission
+  is rejected on metadata before anyone plays the game
+- the consumable is **attached to the version** being submitted
+
+The refill sheet offers the rewarded video first and the pack second, never the
+other way round: reveals have to stay earnable or the rewarded loop stops being
+an honest deal. That ordering is in `GameScene`, not in the store.
+
+### Remove Ads
+
+**It is wired and in the build.** `cordova-plugin-purchase` drives StoreKit and
+the whole store surface lives in `systems/Iap.ts`; the scenes are unchanged.
 The product is `READY_TO_SUBMIT` in all 175 territories.
 
 Two things that were wrong and are worth remembering. The product reported
@@ -108,6 +187,34 @@ set to false.
 machine — it needs a Sandbox Apple ID on a device. Until someone completes one,
 buy / restore / no-repeat-prompt are untested code paths.
 
+## Two native files that are now submission blockers
+
+Both are in the tree and both are pinned by `monetization.test.ts`, so neither
+can quietly go missing. They are listed here because each prevents a specific,
+expensive failure that has nothing to do with the game.
+
+**`NSPhotoLibraryAddUsageDescription` in `Info.plist`** prevents a crash, not a
+denial. Picking *Save Image* from the iOS share sheet runs the save inside this
+app's process, and iOS terminates a process that reaches the photo library with
+no add-only usage string — SIGABRT, on the spot, with no dialog to decline.
+The share pill is reachable from the win screen, the gallery and the web-daily
+end card, which makes it one of the first things a reviewer taps. A crash there
+is a rejection.
+
+**`ios/App/App/PrivacyInfo.xcprivacy`** prevents **ITMS-91053**, the automated
+rejection email for undeclared required-reason APIs. `@capacitor/preferences`
+reaches `UserDefaults` and `@capacitor/filesystem` reads file timestamps, and
+neither plugin ships a privacy manifest of its own (verified: only
+`@capacitor/ios` core has one), so the App target has to declare both —
+`CA92.1` for UserDefaults, `C617.1` for file timestamps. The manifest also
+declares `NSPrivacyTracking: true`, because the app is what asks for ATT.
+`NSPrivacyCollectedDataTypes` is deliberately **empty**: everything the App
+Privacy label declares is collected by AdMob, whose SDK ships its own manifest,
+and declaring it twice would claim the app touches data it never sees. The test
+also greps the Xcode project for `PrivacyInfo.xcprivacy in Resources`, because a
+manifest that is not in the Copy Bundle Resources phase is not in the bundle and
+Apple will not see it.
+
 ## Build and upload
 
     npm test                    # gate — never ship past a red suite
@@ -117,6 +224,12 @@ buy / restore / no-repeat-prompt are untested code paths.
 
 Forgetting `ios:sync` ships the *previous* build's UI inside a new binary,
 which is the single easiest mistake to make here.
+
+`fastlane beta` prints the build number it took from App Store Connect. **Write
+that number into the ledger above before you close the terminal** — it is the
+only moment anyone will ever know it, and builds 15 to 18 are the proof.
+
+Uploading to TestFlight is not submitting for review. See step 4.
 
 ### Signing
 

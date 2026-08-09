@@ -23,7 +23,7 @@ import { admobUnits, adsConfigured, monetization } from '../config/monetization'
 
 const isNative = (): boolean => Capacitor.isNativePlatform();
 
-class AdsService {
+export class AdsService {
   private ready = false;
   private adsRemoved = false;
   private bannerShown = false;
@@ -219,7 +219,7 @@ class AdsService {
         npa: !this.personalized,
       });
 
-      const dismissed = this.once(
+      const settled = this.once(
         [
           InterstitialAdPluginEvents.Dismissed,
           InterstitialAdPluginEvents.FailedToShow,
@@ -227,7 +227,21 @@ class AdsService {
         8000
       );
       await AdMob.showInterstitial();
-      await dismissed;
+      const how = await settled;
+
+      if (how !== InterstitialAdPluginEvents.Dismissed) {
+        // FailedToShow, or nothing at all inside the timeout. Either way no
+        // impression happened, so the caller keeps its win/attempt counter
+        // armed and retries at the next natural break — reporting true here
+        // spent the counter on an ad the player never saw.
+        //
+        // Silence is the ambiguous case: it can also mean an ad IS on screen
+        // and we merely missed the event, so it still stamps the time floor.
+        // Stacking a second interstitial on a live one is the exact pattern
+        // that gets ad serving disabled.
+        if (how === null) this.lastInterstitialAt = Date.now();
+        return false;
+      }
 
       this.lastInterstitialAt = Date.now();
       this.interstitialsThisSession += 1;
@@ -304,19 +318,26 @@ class AdsService {
     }
   }
 
-  /** Resolve on the first of several plugin events, or on a timeout. */
-  private once(events: string[], timeoutMs: number): Promise<void> {
-    return new Promise<void>((resolve) => {
+  /**
+   * Resolve on the first of several plugin events, or with null on a timeout.
+   *
+   * It reports WHICH event fired rather than merely that one did, because
+   * Dismissed and FailedToShow arrive on the same await and only one of them
+   * is an impression. Collapsing them is how a failed present came to be
+   * counted as a shown ad.
+   */
+  private once(events: string[], timeoutMs: number): Promise<string | null> {
+    return new Promise<string | null>((resolve) => {
       let done = false;
-      const finish = (): void => {
+      const finish = (event: string | null): void => {
         if (done) return;
         done = true;
         clearTimeout(timer);
-        resolve();
+        resolve(event);
       };
-      const timer = setTimeout(finish, timeoutMs);
+      const timer = setTimeout(() => finish(null), timeoutMs);
       for (const e of events) {
-        void AdMob.addListener(e as never, finish as never);
+        void AdMob.addListener(e as never, (() => finish(e)) as never);
       }
     });
   }

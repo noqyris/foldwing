@@ -39,7 +39,17 @@ const VOPTS = { cell: 6, hitRadius: METRICS.hitRadius, goalRadius: METRICS.goalR
  * accepted candidate is almost always the first or second, but it made
  * "different date, different maze" true by luck rather than by construction.
  */
-const SEED_STRIDE = 1000;
+export const SEED_STRIDE = 1000;
+
+/**
+ * How many seeds one date may try before the loop gives up.
+ *
+ * Exported alongside SEED_STRIDE because "adjacent days draw from disjoint
+ * seed windows" is a relation between these two numbers and nothing else. A
+ * test that hard-coded them could not fail when one of them moved, which is
+ * exactly how the stride sat at 100 while the loop tried 200 candidates.
+ */
+export const MAX_CANDIDATES = 200;
 
 export function dailySeed(dateISO: string): number {
   return Number(dateISO.replace(/-/g, ''));
@@ -77,7 +87,7 @@ export function dailyLevel(dateISO: string): Level {
    */
   let playableOnly: Level | null = null;
 
-  for (let k = 0; k < 200; k++) {
+  for (let k = 0; k < MAX_CANDIDATES; k++) {
     const { level, decoy } = makeCandidate(base + k, t);
     const playable = validateLevel(level, pf, {
       ...VOPTS,

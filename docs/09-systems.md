@@ -1,3 +1,24 @@
+> **Out of date. Written 7 August 2026, before the maze rewrite; banner added
+> 9 August 2026.**
+>
+> This page describes the retired **100-level set of bar obstacles** and the
+> generator that produced it. Neither still exists. The game now ships 300
+> levels — five hand-authored and 295 spanning-tree mazes built by
+> `src/core/MazeGen.ts`, which is also what the Daily Fold runs on the phone —
+> so every level count below is wrong, and any passage about wall placement,
+> interlock reservation or inert-wall stripping describes code that was
+> deleted with the bar set.
+>
+> The "Source files" line-count tables are wrong too, and that matters more
+> than it looks: the `file:line` citations throughout were counted against
+> those tables, so treat every one of them as a hint about where to look
+> rather than as a location. Read the source.
+>
+> Kept because the reasoning is still worth having. For what the game actually
+> does now, see [../README.md](../README.md).
+
+---
+
 # Systems: Progress, Audio, Haptics, Share, Rate
 
 ## What this covers

@@ -12,13 +12,52 @@ When you win, the stroke and its mirror close into a symmetric figure.
 
     npm install
     npm run dev        # http://localhost:5173
-    npm test           # 1106 unit tests, incl. all 300 levels re-proved
+    npm test           # the whole level set is re-proved on every run
     npm run build      # tsc --noEmit && vite build
     SIM=<udid> npm run ios:run   # build + install + launch on a simulator
+
+No test count here on purpose. The one this line used to carry was stale, and a
+number that goes wrong every time somebody adds a spec teaches the reader to
+distrust the rest of the page. `npx vitest run` prints the real one.
+
+What is worth knowing is that `npm test` takes minutes rather than seconds, and
+the level re-proof is nearly all of it: each of the 300 levels goes through the
+real BFS twice — once for solvability, once with the collision radius inflated
+for playability — and the ramp assertions measure clearance by binary search on
+top of that. It is slow because it is a proof and not a snapshot, and a
+snapshot of a generated set would pin nothing.
 
 Built and verified: the core loop, `Geometry` with 60 unit tests, home / level
 select / gallery, progress persistence, audio and haptics, the share pipeline,
 the Capacitor iOS shell, and AdMob + Remove Ads.
+
+Shipped since that list was written, and none of it in it:
+
+- **The Daily Fold.** One maze a day, the same one for everybody, with no
+  server — the generator is a pure function of a seed, so `seed = date` *is*
+  the synchronization. It is computed on the phone, gated by the same four
+  acceptance rules the shipped set uses, and it carries a streak and a
+  spoiler-safe text share.
+- **Chapters of twenty** in the level select. Three hundred cards in one wall
+  read as a featureless climb; twenty at a time gives it finish lines.
+- **Par and medals.** The validator already proves a route, so its arc length
+  is the par, stored per level as `parPx`. The attempt counter becomes the
+  verdict on a win — `your line 1.31× par` — and turns gold at ≤1.25×.
+  Every finished level becomes a score to come back for, at zero content cost.
+- **A ghost of your last attempt** on the retry, so a death leaves information
+  behind instead of just a reset.
+- **Fold Sense**, a 0..100 rating of the one thing this game is about: reading
+  the half of the maze you cannot see. Line-versus-par, tries, reveals spent,
+  what share of your deaths were the *reflection* dying, and how much of the
+  level is folded. It is a game rating in the sense Elo is one, and marketing
+  copy must keep it that way (see `MARKETING.md`).
+- **The reveal pack**, a 20-reveal consumable offered beside the rewarded
+  video when the stash runs out — never instead of it.
+- **The web daily**: one build flag turns the same codebase into an
+  install-free page that boots straight into today's fold and points a
+  finished player at the App Store.
+- **A settings sheet** — sound, haptics, reduced motion — which is also the
+  first time any of those three had a caller rather than a default.
 
 Still open from the original plan: the debug overlay (step 5).
 
@@ -32,7 +71,7 @@ solve is partly invisible where they draw, and the only way to tell a real
 fork from a trap is to fold the far half across in their head. Every level is
 *proved* solvable by `LevelValidator` — a BFS gated by the real
 `CollisionSystem`, so the validator can never be more permissive than the game
-— and forced to wind (route ≥ 1.5× the direct distance) with real decoy mass.
+— and forced to wind (route ≥ 1.35× the direct distance) with real decoys.
 `levels.test.ts` re-proves all 300 on every run.
 
 ### Ordering by difficulty, not by density
@@ -53,29 +92,43 @@ and the test suite compute the same number and the shipped order can be checked
 against the rule that produced it — a pool-relative rank blend reads better and
 is untestable.
 
-The generator measures a pool an order of magnitude larger than the set, then
-ships a spread across its difficulty range **skewed toward the hard end**
-(`SKEW = 0.55`): position 0 still takes the easiest candidate and position 94
-the hardest, but the middle of the game samples from what a linear spread
-called the top third. The set is built to be demanding — the warm-up lives in
-the hand-authored tutorial, not in thirty roomy generated levels. After:
-interlock ρ **−0.057 → ~0.8**, and clearance falls smoothly 30 → 8 base px
-with no band-to-band cliff, against a proved playable floor of 6. Tests pin
-all of it.
+The generator measures a pool four times the size of the set (1200 candidates
+for 295 slots), then ships a spread across its difficulty range **skewed toward
+the hard end** (`SKEW = 0.8`): position 0 still takes the easiest candidate and
+position 294 the hardest, but the halfway point samples the 57th percentile
+rather than the 50th, so the opening third stays genuinely easy and the climb
+steepens through the middle. After: interlock now tracks the shipped order at
+ρ **0.583** where the old sort had it at −0.057, winding tracks it at 0.741,
+and clearance falls smoothly from 33.2 base px across the opening ten levels to
+9.7 across the closing twenty — no band-to-band cliff anywhere, against a
+proved playable floor of 6. Tests pin all of it.
 
 ### Craft
 
-Three things a measurement won't catch but a player will:
+Three things the solvability proof says nothing about, and a player notices in
+the first minute:
 
-- **Inert walls.** Random placement produces obstacles whose constraint is
-  already covered by something else, most often a far-half wall whose
-  reflection lands inside a near wall. The player folds it in their head and
-  finds it changes nothing — worse than an absent wall, because the level
-  promised a problem that doesn't exist. 34 shipped across 30 levels. The
-  generator strips them and `quality.test.ts` fails the build if one returns.
+- **Walls that are doing something.** The bar-era test for this was *inertness*
+  — a wall is inert if removing it changes nothing the player can reach — and
+  the generator stripped those. That criterion is meaningless for a maze, and
+  quietly so: a spanning tree already reaches every cell, so no maze wall
+  changes reachable area, and the check would pass every level for the wrong
+  reason. A maze wall's job is to make the route long and the wrong turns real,
+  so that is what is gated now. Four rules, all of them in
+  `LevelValidator.ts` rather than in the generator script, because the Daily
+  Fold has to apply exactly the same ones at runtime:
+  the one true route must **wind** past the straight line (`MIN_WINDING` 1.35;
+  the shipped minimum is 1.353, the maximum 2.83); at least 30% of the maze's
+  cells must lie **off** that route as dead ends to explore and reject
+  (`MIN_DECOY`, measured on the spanning tree, where the number is real);
+  both halves must squeeze at the same height often enough to matter
+  (`MIN_INTERLOCK` 0.08); and the route must survive the whole solvability
+  proof again with the collision radius inflated by `PLAYABLE_CLEARANCE`.
+  `quality.test.ts` re-measures winding and off-route ground on every shipped
+  level and fails the build if either slips.
 - **Names.** A flat word list picked by a coprime stride called the hardest
   level in the game "Soft bend". Adjectives are banded by tone now, so the name
-  agrees with the ramp: *First fold* → *Severe edge*.
+  agrees with the ramp: *First fold* → *Closed edge*.
 - **Duplicates, overlaps and slivers**, all pinned rather than eyeballed.
 
 ### The mirror has to be load-bearing
@@ -87,14 +140,17 @@ other, one thought at a time. The mirror was decoration. Measured across the
 100 shipped levels, **98 had zero overlap** between the two halves; the mean was
 0.4%.
 
-The fix is a row that closes the corridor from both sides at once — the left
-edge of the gap is a wall you can see, the right edge is the reflection of a
-wall on the far half, and neither alone says where the opening is. The
-generator now reserves rows for it before rolling anything else, scaling with
-difficulty, and *measures* the result rather than trusting the placement,
-because a neighbouring row can swallow the corridor. Zero-overlap levels went
-from 98 to 4, and those four are the hand-authored tutorial: 1–4 teach one
-constraint at a time and 5 is where both arrive together. Mean overlap is 37%.
+The fix is a corridor closed from both sides at once — the left edge of the gap
+is a wall you can see, the right edge is the reflection of a wall on the far
+half, and neither alone says where the opening is. The maze produces that
+structurally rather than by arrangement: every wall sits on a shared grid line,
+and `foldFraction` sends a difficulty-growing share of them to the far side, so
+the two halves land at the same heights by construction. The generator does not
+trust that — it *measures* every candidate with `interlock()` and throws away
+anything under `MIN_INTERLOCK`. Zero-overlap levels went from 98 to 4, and those
+four are the hand-authored tutorial: 1–4 teach one constraint at a time and 5 is
+where both arrive together. Mean interlock across the generated set is **58%**,
+with the quietest level at 8.8% and the loudest at 94%.
 
 `interlock()` is the measure and `levels.test.ts` pins three things — every
 generated level interlocks, the tutorial's teaching order is preserved, and the
@@ -112,9 +168,10 @@ is not a hard level but an impossible one, and they sat at the hard end where
 So every level now has to survive the same proof with the collision radius
 inflated by `PLAYABLE_CLEARANCE`, and the generator rejects candidates that
 cannot. `clearance()` measures the real figure: the tightest level in the set
-went from 0.53 to 6.1 base px, about 3 css px of room for the hand on each side.
-A test pins both ends — the minimum may not drop, and it may not run away
-upwards either, because that would mean the hard end had quietly gone soft.
+went from 0.53 to **9.0 base px**, about 4.7 css px of room for the hand on each
+side, against a floor of 6. A test pins both ends — the minimum may not drop,
+and it may not run away upwards either, because that would mean the hard end had
+quietly gone soft.
 
 ## The bit that travels
 
@@ -129,9 +186,13 @@ the same code that drew it live. Tapping one renders a **1080×1080 card** —
 paper grain, the figure, the wordmark — and hands it to the native share sheet.
 
 The app icon is generated by that same renderer from a hand-authored figure, so
-the mark on the home screen is literally made of the mechanic:
+the mark on the home screen is literally made of the mechanic. `ShareCard` still
+carries the two options it needed — `nibScale` for a far bolder line than a card
+wants, and `flat` to drop the paper grain, which an icon must not have.
 
-    node scratch/make-icon.mjs   # see the scratchpad script in this session
+The script that drove it, `scratch/make-icon.mjs`, is **not committed** and
+never was. What is committed is its output, in `Assets.xcassets`. Regenerating
+the icon means writing that script again against `render/ShareCard.ts`.
 
 ## Sound
 
@@ -153,29 +214,38 @@ Press and drag from the start dot. Release short of the goal and the attempt
 just resets — no penalty, no screen. Hit a wall and you get 400ms of red and
 then you are drawing again; no tap required.
 
-In `npm run dev` only: keys `1`–`5` jump levels, `R` restarts. Tapping after a
-win advances.
+In `npm run dev` only: keys `1`–`9` jump to those levels, `R` restarts the one
+you are on, `M` goes back to the menu. Tapping after a win advances.
 
 ## Layout of the code
 
     src/
       main.ts                 Phaser config, viewport-settle handling
-      scenes/BootScene.ts     entry point; future home of preload + audio unlock
+      scenes/BootScene.ts     the only entry: save, settings, ad + store warm-up
       scenes/GameScene.ts     the core loop and the input state machine
+      scenes/GalleryScene.ts  every figure ever drawn; tap one to share it
       core/Geometry.ts        segment/rect/circle math — pure, no Phaser
       core/Playfield.ts       normalized level space -> pixels, and the axis
       core/StrokeRecorder.ts  raw sampling, Chaikin smoothing, mirroring
       core/CollisionSystem.ts stroke + reflection against the full wall list
       core/DrawCursor.ts      the touch finger-offset, as a pure function
+      core/MazeGen.ts         the maze as a pure function of a seed — ONE copy
+      core/CalendarDay.ts     the one answer to "what day is it", in LOCAL time
+      core/FoldSense.ts       the 0..100 skill rating, from real play signals
+      data/tutorialLevels.ts  the five hand-authored levels, apart from the table
       data/levels.ts          5 hand-authored + 295 generated = 300
       data/generatedLevels.ts GENERATED — run scripts/genLevels.ts
-      core/LevelValidator.ts  BFS proof that a level can be finished
+      core/LevelValidator.ts  BFS proof a level can be finished, plus the gates
       core/Ribbon.ts          speed-driven variable-width ink
       data/types.ts           Level shape + the LOCKED coordinate system
       render/InkRenderer.ts   walls, axis, stroke, mirror, fail flash, win figure
       render/Theme.ts         palette, sizing tokens, base canvas
+      render/UI.ts            the Phaser-primitive shell: type, buttons, sheets
+      render/ShareCard.ts     the 1080×1080 export, on a plain 2D canvas
       render/HitArea.ts       why a centred hit rectangle must start at (0,0)
       render/ScrollView.ts    tap-vs-drag, momentum, and off-screen culling
+      systems/Daily.ts        today's fold — seed = date, so the world agrees
+      systems/WebDaily.ts     the install-free browser build, as one build flag
 
 ## Two things that look like polish and are not
 
@@ -240,7 +310,17 @@ Four placements:
 4. **A voluntary ask.** Rewarded video for a *reveal*, which paints the mirror's
    forbidden bands onto your half for six seconds — the exact thing the game
    withholds: not the answer, but where your own reflection is about to kill
-   you. Rewards are banked, not auto-spent, with a free daily top-up.
+   you. Rewards are banked, not auto-spent, with a free daily top-up. The offer
+   is contextual: after three deaths on one level the game points at the fold,
+   and only after six does it offer the way past, so it visibly tries to teach
+   before it offers to excuse.
+
+Two purchases, both in `systems/Iap.ts`: **Remove Ads**
+(`com.noqyris.foldwing.removeads`, non-consumable) and a **20-reveal pack**
+(`com.noqyris.foldwing.reveals20`, consumable). The pack appears in one place
+only — the sheet you get when the stash is empty — and always *beside* the
+rewarded video rather than instead of it. Reveals have to stay earnable or
+watching the next ad stops being a fair deal.
 
 ### Why the retry ad needs two gates and not one
 
@@ -261,9 +341,11 @@ Remove Ads bundles unlimited reveals, so the purchase is worth roughly double at
 no marginal cost. Nothing in `CollisionSystem` reads `InkTheme`, so no skin and
 no purchase can change what kills you.
 
-Going live is one switch — `useTestAds: false` — plus the matching native app id
-in `Info.plist`, and a test fails the build if those two disagree. See
-`SUBMIT.md`.
+Going live is one switch — `useTestAds: false` — plus the matching native
+app id in `Info.plist`. A test fails if those two disagree, and a second one,
+which branches on nothing, fails if Google's test publisher id appears in the
+plist at all: agreement alone was a green suite for *both* on TEST, and that is
+how a build went out with test ads in a signed ipa. See `SUBMIT.md`.
 
 ## One open question for the author
 

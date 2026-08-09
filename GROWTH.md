@@ -16,7 +16,23 @@ spoiler-safe TEXT share for the Daily. Guardrail: it is a game rating, not
 a cognition claim — never market it as brain anything (see MARKETING.md).
 Still open from this list: Foldwing Plus SKU, weekly Impossible fold, Zen
 mode, Game Center (planned in MARKETING-PLAN.md phase 2 alongside the
-streak widget and web daily).
+streak widget).
+
+**Since (2026-08-09):** nothing new off this list — the work went into making
+what is already on it true. The submission state is real again: live AdMob
+units in the tree, and a test that now fails on Google's test publisher id
+whatever `useTestAds` says, because "both knobs on TEST" agreed with each other
+and shipped inside build 19. The Daily's seams were closed — one definition of
+what day it is (`core/CalendarDay.ts`, LOCAL, which the fold and the free
+top-up had been disagreeing about for up to eleven hours a day), the decoy gate
+applied at runtime so a daily clears the same four gates every shipped level
+does, no unproved maze left reachable as a fallback, and the daily no longer
+handing the ad gate a mid-ladder index that sailed past the onboarding grace.
+Also shipped: a settings sheet (sound, haptics, reduced motion), first-run
+hints on level 1 and on the first daily, an actual ending for the campaign —
+level 300 returns to the menu, which says so rather than pretending nothing
+happened — and the web daily (`systems/WebDaily.ts`), ahead of its phase-2
+slot.
 
 ## Monetization: what fits THIS game
 
