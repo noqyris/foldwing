@@ -1,8 +1,20 @@
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { admobUnits, adsConfigured, monetization } from './monetization';
 
-const PLIST = 'ios/App/App/Info.plist';
+/*
+ * Anchored to this file, not to the working directory. A cwd-relative path
+ * reads nothing when the suite is invoked from anywhere but the repo root, and
+ * a plist that fails to load silently turns every assertion below into a
+ * comparison against the empty string.
+ */
+const repo = (p: string): string =>
+  fileURLToPath(new URL(`../../${p}`, import.meta.url));
+
+const PLIST = repo('ios/App/App/Info.plist');
+const XCPRIVACY = repo('ios/App/App/PrivacyInfo.xcprivacy');
+const PBXPROJ = repo('ios/App/App.xcodeproj/project.pbxproj');
 
 /** The value of a <key>/<string> pair in an Info.plist. */
 function plistString(key: string): string {
@@ -54,12 +66,72 @@ describe('AdMob identifiers', () => {
     }
   });
 
+  /*
+   * The test above only proves the two knobs AGREE. Both-on-TEST agrees, so it
+   * passes — and that is exactly how build 19 came to carry Google's test app
+   * id inside a signed, uploadable ipa.
+   *
+   * This one does not branch on anything. The tree's committed state is the
+   * submission state, so the test publisher id may not appear in the plist at
+   * all. Flip `useTestAds` locally to judge placement if you like; you cannot
+   * commit that flip, and you cannot archive past it.
+   */
+  it('never leaves Google test ad ids in the native project', () => {
+    const xml = readFileSync(PLIST, 'utf8');
+    expect(xml).not.toContain('3940256099942544');
+    expect(monetization.useTestAds).toBe(false);
+  });
+
+  it('ships the live publisher account, not somebody else s', () => {
+    expect(plistString('GADApplicationIdentifier')).toBe(
+      'ca-app-pub-3307486877162157~5033197766'
+    );
+  });
+
   it('declares ATT and the SKAdNetwork list the SDK needs', () => {
     const xml = readFileSync(PLIST, 'utf8');
     expect(plistString('NSUserTrackingUsageDescription').length).toBeGreaterThan(20);
     expect(xml).toContain('SKAdNetworkItems');
     // Google's own network must be present or installs are unattributable.
     expect(xml).toContain('cstr6suwn9.skadnetwork');
+  });
+
+  /*
+   * Picking "Save Image" from the share sheet runs the save inside this app's
+   * process, so iOS requires the add-only photo permission string. Its absence
+   * is an immediate SIGABRT, not a denial — and the share pill is reachable
+   * from the win screen, the gallery and the web-daily end card, which makes it
+   * one of the first things a reviewer taps.
+   */
+  it('carries the photo-add permission the share sheet crashes without', () => {
+    expect(plistString('NSPhotoLibraryAddUsageDescription').length).toBeGreaterThan(20);
+  });
+
+  /*
+   * @capacitor/preferences (UserDefaults) and @capacitor/filesystem (file
+   * timestamps) ship no privacy manifest of their own, so the App target has to
+   * declare those required-reason APIs or Apple returns ITMS-91053.
+   */
+  it('ships a privacy manifest declaring the required-reason APIs', () => {
+    const xcp = readFileSync(XCPRIVACY, 'utf8');
+    expect(xcp).toContain('NSPrivacyAccessedAPICategoryUserDefaults');
+    expect(xcp).toContain('CA92.1');
+    expect(xcp).toContain('NSPrivacyAccessedAPICategoryFileTimestamp');
+    expect(xcp).toContain('C617.1');
+
+    // It is only in the bundle if the Xcode project copies it.
+    const pbx = readFileSync(PBXPROJ, 'utf8');
+    expect(pbx).toContain('PrivacyInfo.xcprivacy in Resources');
+  });
+
+  /*
+   * fastlane derives the next build number from TestFlight and writes it into
+   * CURRENT_PROJECT_VERSION. A literal here reads none of that: the archive
+   * keeps the old number and App Store Connect rejects it as a duplicate.
+   */
+  it('lets the build number come from the build setting fastlane increments', () => {
+    expect(plistString('CFBundleVersion')).toBe('$(CURRENT_PROJECT_VERSION)');
+    expect(plistString('CFBundleShortVersionString')).toBe('$(MARKETING_VERSION)');
   });
 });
 

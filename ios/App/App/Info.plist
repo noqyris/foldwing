@@ -19,13 +19,15 @@
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>19</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>GADApplicationIdentifier</key>
-	<string>ca-app-pub-3940256099942544~1458002511</string>
+	<string>ca-app-pub-3307486877162157~5033197766</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Lets you save a figure you drew to your photos when you pick Save Image from the share sheet.</string>
 	<key>NSUserTrackingUsageDescription</key>
 	<string>Allows Foldwing to show ads that are more relevant to you. Declining keeps the ads, just less relevant.</string>
 	<key>SKAdNetworkItems</key>

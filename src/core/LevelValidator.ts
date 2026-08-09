@@ -354,6 +354,35 @@ export function routeArc(
 export const PLAYABLE_CLEARANCE = 6;
 
 /**
+ * The acceptance gates every foldwing maze must clear, alongside playability.
+ *
+ * These lived in `scripts/genLevels.ts`, which meant the build-time curator
+ * enforced four gates and the runtime Daily Fold enforced three — it silently
+ * dropped the decoy floor, and measured over 180 consecutive dates, 4.4% of
+ * dailies shipped below a bar every hand-picked level had to clear. A shared
+ * definition is the only way "the daily uses the same gates" can be a true
+ * sentence rather than an intention.
+ */
+
+/** Both halves must squeeze at the same height often enough to matter. */
+export const MIN_INTERLOCK = 0.08;
+
+/**
+ * The one route must genuinely wind, as a multiple of the direct distance. A
+ * 3×5 opener physically cannot wind like a 7×11 finisher, so the floor sits
+ * where the smallest grids still produce real mazes; the sort puts the windiest
+ * ones last.
+ */
+export const MIN_WINDING = 1.35;
+
+/**
+ * Fraction of maze CELLS off the solve route — dead ends to explore and reject.
+ * Measured on the spanning tree, where the number is real. A maze under this is
+ * a corridor with decoration.
+ */
+export const MIN_DECOY = 0.3;
+
+/**
  * How hard the level looks, 0..1 — the fraction of the drawable half that the
  * player is NOT allowed to use.
  *

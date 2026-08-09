@@ -27,6 +27,9 @@ import {
   difficulty,
   interlock,
   interlockBands,
+  MIN_DECOY,
+  MIN_INTERLOCK,
+  MIN_WINDING,
   PLAYABLE_CLEARANCE,
   pressure,
   routeArc,
@@ -37,14 +40,9 @@ import type { Level } from '../src/data/types';
 
 const TARGET = 295;
 const POOL = 1200;
-const MIN_INTERLOCK = 0.08;
-/** The one route must genuinely wind. A 3×5 opener physically cannot wind
- *  like a 7×11 finisher, so the floor sits where the smallest grids still
- *  produce real mazes; the SORT puts the windiest ones last. */
-const MIN_WINDING = 1.35;
-/** Fraction of maze CELLS off the solve route — dead ends to explore and
- *  reject. Measured on the spanning tree, where the number is real. */
-const MIN_DECOY = 0.3;
+
+/* MIN_INTERLOCK / MIN_WINDING / MIN_DECOY now live in LevelValidator, so the
+ * runtime Daily Fold applies the same four gates this script does. */
 
 const pf = new Playfield(BASE_WIDTH, BASE_HEIGHT, METRICS.inset);
 

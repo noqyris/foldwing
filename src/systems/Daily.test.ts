@@ -65,7 +65,9 @@ describe('the daily fold', () => {
 describe('the daily streak', () => {
   const seed = (dates: string[]): void => {
     Progress.update({
-      daily: Object.fromEntries(dates.map((d) => [d, { ms: 1000, attempts: 1 }])),
+      daily: Object.fromEntries(
+        dates.map((d) => [d, { ms: 1000, deaths: 0, foldSense: 50 }])
+      ),
     });
   };
 

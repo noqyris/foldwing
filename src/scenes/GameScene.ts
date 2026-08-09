@@ -189,10 +189,26 @@ export class GameScene extends Phaser.Scene {
 
   /** The Daily Fold: computed from the date, not looked up in LEVELS. */
   private loadDaily(dateISO: string): void {
-    // For everything keyed off a level INDEX — ad gating, nothing else — the
-    // daily counts as mid-game: past the tutorial grace, nothing special.
+    // Mid-ladder, so anything reading the index treats the daily as a real
+    // level rather than a tutorial one. NOT what the ad gate reads — see
+    // `onboardingIndex`.
     this.levelIndex = Math.floor(LEVELS.length / 2);
     this.installLevel(dailyLevel(dateISO));
+  }
+
+  /**
+   * How far into the game the PLAYER is, which is what the onboarding ad grace
+   * is actually about — not which level happens to be on screen.
+   *
+   * The daily used to hand the ad gate its own mid-ladder index of 150, sailing
+   * straight past `interstitialFromLevel: 8`. On a fresh install that meant:
+   * win level 1, win level 2, tap Daily fold, win it — and an interstitial
+   * fired on the way out, about ninety seconds into someone's first session.
+   * The grace exists precisely for the player who has not yet felt the hook,
+   * and the Daily is the feature aimed at exactly that player.
+   */
+  private get onboardingIndex(): number {
+    return this.dailyDate ? Progress.data.unlockedIndex : this.levelIndex;
   }
 
   private installLevel(level: Level): void {
@@ -246,11 +262,23 @@ export class GameScene extends Phaser.Scene {
     this.refreshHud();
 
     /*
-     * The one deliberate tutorial line outside the tutorial. Level 6 is the
-     * first generated maze — the first time walls are hidden in the fold —
-     * and the Reveal button is the tool for exactly that. Say so, once, at
-     * the moment it becomes true, and stop once the level is beaten.
+     * Two deliberate lines, each said once at the moment it becomes true.
+     *
+     * Level 1 is the whole of first-run onboarding: the game asks for a gesture
+     * nobody has made in another game, and until this line existed it asked for
+     * it silently. A player who does not discover that they must press the DOT
+     * — not anywhere on the paper — has no way in at all.
+     *
+     * Level 6 is the first generated maze, the first time walls are hidden in
+     * the fold, and Reveal is the tool for exactly that.
      */
+    if (!this.dailyDate && this.levelIndex === 0 && !Progress.hasCleared('l1')) {
+      this.showHint('press the dot and draw to the ring', 900);
+      this.time.delayedCall(8000, () => {
+        if (this.phase === 'idle') this.hideHint();
+      });
+    }
+
     if (this.levelIndex === 5 && !this.dailyDate && !Progress.hasCleared('l6')) {
       this.showHint('stuck? Reveal shows the walls folded from the far half', 900);
       this.time.delayedCall(7000, () => {
@@ -448,8 +476,8 @@ export class GameScene extends Phaser.Scene {
 
     const elapsed = this.time.now - this.strokeStartedAt;
     if (this.dailyDate) {
-      // The daily records its own ledger and unlocks nothing.
-      Progress.recordDaily(this.dailyDate, elapsed, this.attempts);
+      // The daily unlocks nothing; its ledger is written below, once the score
+      // that belongs in it exists.
       Progress.update({
         totalWins: Progress.data.totalWins + 1,
         winsSinceAd: Progress.data.winsSinceAd + 1,
@@ -477,7 +505,11 @@ export class GameScene extends Phaser.Scene {
       })?.arc;
     this.winRatio = par && par > 0 ? lineLen / par : null;
     this.winMedal = this.winRatio !== null && this.winRatio <= MEDAL_RATIO;
-    if (this.winMedal && !this.dailyDate) Progress.addMedal(this.level.id);
+    // The daily has no card to carry a medal and no list to keep it in, so it
+    // does not claim one. The HUD reads this same flag — showing a gold mark
+    // that is discarded on the spot is worse than showing none.
+    if (this.winMedal && this.dailyDate) this.winMedal = false;
+    if (this.winMedal) Progress.addMedal(this.level.id);
 
     // Fold Sense: score this win from real play signals, fold the profile
     // rating toward it.
@@ -491,6 +523,16 @@ export class GameScene extends Phaser.Scene {
     Progress.update({
       foldSense: nextProfileScore(Progress.data.foldSense, this.winSense),
     });
+
+    // Deaths, not attempts: an abandoned stroke is not a failure anywhere else
+    // in this game, and this record is written once and never recomputed.
+    if (this.dailyDate) {
+      Progress.recordDaily(this.dailyDate, {
+        ms: elapsed,
+        deaths: this.totalDeaths,
+        foldSense: this.winSense,
+      });
+    }
 
     // Keep the figure. Normalized, with its timing, so it can be redrawn on any
     // device at any size — including 1080×1080 in someone else's feed.
@@ -527,7 +569,7 @@ export class GameScene extends Phaser.Scene {
     // At most one interruption per moment. If an ad is queued for the way out,
     // the rating prompt stands down rather than stacking on top of it.
     const adWillShow = Ads.wouldShowInterstitial(
-      this.levelIndex,
+      this.onboardingIndex,
       Progress.data.winsSinceAd
     );
     if (Rate.shouldAsk(adWillShow)) {
@@ -563,7 +605,7 @@ export class GameScene extends Phaser.Scene {
 
     const next = this.levelIndex + 1;
 
-    if (Ads.wouldShowInterstitial(this.levelIndex, Progress.data.winsSinceAd)) {
+    if (Ads.wouldShowInterstitial(this.onboardingIndex, Progress.data.winsSinceAd)) {
       const shown = await Ads.showInterstitial();
       // Only spend the counter when an ad actually rendered; on no-fill it
       // stays armed so the next natural break retries.
@@ -581,8 +623,15 @@ export class GameScene extends Phaser.Scene {
       this.scene.start('Menu');
       return;
     }
+    /*
+     * The top of the ladder. Three hundred mazes is a real thing to have
+     * finished, and silently returning someone to the grid says nothing
+     * happened. The Menu is the right destination — it is where the Daily Fold
+     * and the gallery live, which is what the game is for after the campaign.
+     */
     if (next >= LEVELS.length) {
-      this.scene.start('LevelSelect');
+      this.registry.set('campaignComplete', true);
+      this.scene.start('Menu');
       return;
     }
     this.loadLevel(next);
@@ -761,7 +810,7 @@ export class GameScene extends Phaser.Scene {
    */
   private async maybeAdOnRetry(): Promise<void> {
     if (this.phase !== 'idle' || this.advancing) return;
-    if (!Ads.wouldShowOnAttempt(this.levelIndex, Progress.data.attemptsSinceAd)) return;
+    if (!Ads.wouldShowOnAttempt(this.onboardingIndex, Progress.data.attemptsSinceAd)) return;
 
     const shown = await Ads.showInterstitial();
     // Only spend the counter when an ad actually rendered; on no-fill it stays
@@ -1175,8 +1224,18 @@ export class GameScene extends Phaser.Scene {
         .setFontSize(`${TYPE.label}px`)
         .setColor(this.winMedal ? 'rgba(176,138,32,0.9)' : 'rgba(22,50,60,0.5)');
     } else {
+      /*
+       * Idle on a level already beaten shows the time to beat. `bestMs` was
+       * written on every win and read by nothing — a stored score with no
+       * scoreboard. The attempt slot is empty at this moment anyway, and a
+       * personal best sitting there turns a replay into a race against the only
+       * opponent the game has.
+       */
+      const best = this.dailyDate ? undefined : Progress.data.bestMs[this.level.id];
+      const idle =
+        best !== undefined ? `best ${(best / 1000).toFixed(1)}s` : '';
       this.attemptText
-        .setText(this.attempts > 0 ? `attempt ${this.attempts}` : '')
+        .setText(this.attempts > 0 ? `attempt ${this.attempts}` : idle)
         .setFontSize(`${TYPE.micro}px`)
         .setColor('rgba(22,50,60,0.32)');
     }

@@ -13,8 +13,26 @@
 
 import { Preferences } from '@capacitor/preferences';
 import { monetization } from '../config/monetization';
+import { ISO_DATE, shiftISO, todayISO } from '../core/CalendarDay';
 
 const KEY = 'foldwing.save.v1';
+
+/**
+ * Schema version of the save, and specifically of what the level ids in it
+ * MEAN.
+ *
+ * 1 — the bar-obstacle set: 5 tutorial levels plus l6…l100 of generated bars.
+ * 2 — the maze set: the same ids l6…l100 now name completely different mazes,
+ *     and the set runs to l300.
+ *
+ * That id reuse is the whole reason this number exists. Without it an upgrading
+ * player opens the new game with 95 mazes they have never seen marked as
+ * cleared, best times attached to levels that no longer exist, and — because
+ * the level-6 hint fires only for a player who has not cleared l6 — no showing
+ * of the one line in the entire game that explains what Reveal is for. The
+ * player who most needs that explanation is exactly the one who cannot get it.
+ */
+const SCHEMA = 2;
 
 /**
  * A figure the player earned, stored so it can be redrawn anywhere.
@@ -35,13 +53,26 @@ export interface SavedFigure {
   readonly at: number;
 }
 
-/** One finished Daily Fold. */
+/**
+ * One finished Daily Fold.
+ *
+ * `deaths`, not attempts. This used to store the attempt counter, which
+ * increments on every stroke STARTED — including the ones the player abandons
+ * by lifting a finger, which the rest of the game explicitly does not treat as
+ * a failure. It is written once and never recomputed, so a wrong number here is
+ * wrong forever; the share card was already using deaths while the ledger kept
+ * something else.
+ */
 export interface DailyResult {
   readonly ms: number;
-  readonly attempts: number;
+  readonly deaths: number;
+  /** Fold Sense earned that day, 0 when unrated. */
+  readonly foldSense: number;
 }
 
 export interface SaveData {
+  /** What the level ids in this save mean. See SCHEMA. */
+  version: number;
   /** Highest level index the player has unlocked. 0 = only the first. */
   unlockedIndex: number;
   /** Best completion time per level id, in ms. */
@@ -81,8 +112,21 @@ export interface SaveData {
  */
 const MAX_FIGURES = 120;
 
+/**
+ * How many finished Daily Folds to keep, for the same reason as MAX_FIGURES and
+ * for a while the only field in this file that ignored it: `daily` grew without
+ * limit, so a two-year streak meant ~730 records parsed at every launch and
+ * re-serialised on every write.
+ *
+ * Two years of history is far more than the streak needs (it only ever walks
+ * backwards from today until it finds a gap) and more than any calendar view
+ * would scroll.
+ */
+const MAX_DAILY = 730;
+
 function freshSave(): SaveData {
   return {
+    version: SCHEMA,
     unlockedIndex: 0,
     bestMs: {},
     cleared: [],
@@ -135,21 +179,56 @@ function coerce(raw: unknown): SaveData {
     : base.figures;
 
   /** Keep only well-formed daily entries under sane ISO-date keys. */
-  const daily: Record<string, DailyResult> = {};
+  const allDaily: [string, DailyResult][] = [];
   if (typeof r.daily === 'object' && r.daily !== null) {
     for (const [k, v] of Object.entries(r.daily as Record<string, unknown>)) {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(k)) continue;
+      if (!ISO_DATE.test(k)) continue;
       if (typeof v !== 'object' || v === null) continue;
       const d = v as Partial<DailyResult>;
       if (typeof d.ms !== 'number' || !Number.isFinite(d.ms)) continue;
-      daily[k] = { ms: Math.max(0, d.ms), attempts: count(d.attempts, 1, 1) };
+      allDaily.push([
+        k,
+        {
+          ms: Math.max(0, d.ms),
+          deaths: count(d.deaths, 0),
+          foldSense: Math.min(100, count(d.foldSense, 0)),
+        },
+      ]);
     }
   }
+  // Newest kept: the streak only ever walks backwards from today.
+  allDaily.sort((a, b) => (a[0] < b[0] ? 1 : -1));
+  const daily: Record<string, DailyResult> = Object.fromEntries(
+    allDaily.slice(0, MAX_DAILY)
+  );
+
+  const version = count(r.version, 1, 1);
+
+  /*
+   * The v1 → v2 content migration.
+   *
+   * Everything the player EARNED survives: the purchase, the gallery, the
+   * reveal stash, the daily ledger and streak, lifetime wins. What is dropped
+   * is everything keyed by a level id, because in v1 those ids named bar levels
+   * and in v2 they name mazes — keeping them would credit the player with 95
+   * mazes they have never seen and attach best times to levels that no longer
+   * exist.
+   *
+   * `unlockedIndex` is deliberately NOT reset. Access is the one thing it would
+   * be unkind to take back, and an unlocked-but-uncleared level is a coherent
+   * state the level select already renders: you may play it, you have not
+   * finished it.
+   */
+  const stale = version < SCHEMA;
 
   return {
+    version: SCHEMA,
     unlockedIndex: count(r.unlockedIndex, base.unlockedIndex),
-    bestMs: typeof r.bestMs === 'object' && r.bestMs !== null ? r.bestMs : base.bestMs,
-    cleared: Array.isArray(r.cleared) ? r.cleared.filter((c) => typeof c === 'string') : base.cleared,
+    bestMs: !stale && typeof r.bestMs === 'object' && r.bestMs !== null ? r.bestMs : base.bestMs,
+    cleared:
+      !stale && Array.isArray(r.cleared)
+        ? r.cleared.filter((c) => typeof c === 'string')
+        : base.cleared,
     reveals: count(r.reveals, base.reveals),
     lastTopUp: typeof r.lastTopUp === 'string' ? r.lastTopUp : base.lastTopUp,
     adsRemoved: r.adsRemoved === true,
@@ -159,7 +238,10 @@ function coerce(raw: unknown): SaveData {
     ratePrompted: r.ratePrompted === true,
     figures,
     daily,
-    medals: Array.isArray(r.medals) ? r.medals.filter((m) => typeof m === 'string') : base.medals,
+    medals:
+      !stale && Array.isArray(r.medals)
+        ? r.medals.filter((m) => typeof m === 'string')
+        : base.medals,
     foldSense: Math.min(100, count(r.foldSense, base.foldSense)),
   };
 }
@@ -273,9 +355,13 @@ class ProgressStore {
   /* ---------------------------------------------------------- daily fold */
 
   /** Record today's Daily Fold. First finish wins; replays don't overwrite. */
-  recordDaily(dateISO: string, ms: number, attempts: number): void {
+  recordDaily(dateISO: string, result: DailyResult): void {
     if (this.state.daily[dateISO]) return;
-    this.update({ daily: { ...this.state.daily, [dateISO]: { ms, attempts } } });
+    this.update({ daily: { ...this.state.daily, [dateISO]: result } });
+  }
+
+  dailyResult(dateISO: string): DailyResult | null {
+    return this.state.daily[dateISO] ?? null;
   }
 
   hasDaily(dateISO: string): boolean {
@@ -288,16 +374,29 @@ class ProgressStore {
    * streak survives until the day actually passes, which is how every streak
    * the player has ever kept works.
    */
-  dailyStreak(todayISO: string): number {
+  dailyStreak(today: string): number {
     const done = this.state.daily;
-    let day = new Date(`${todayISO}T00:00:00Z`);
-    if (!done[todayISO]) day = new Date(day.getTime() - 86400000);
+    let day = done[today] ? today : shiftISO(today, -1);
     let streak = 0;
-    while (done[day.toISOString().slice(0, 10)]) {
+    while (done[day]) {
       streak++;
-      day = new Date(day.getTime() - 86400000);
+      day = shiftISO(day, -1);
     }
     return streak;
+  }
+
+  /** The best run the player has ever kept, for the streak-loss moment. */
+  longestStreak(): number {
+    const days = Object.keys(this.state.daily).sort();
+    let best = 0;
+    let run = 0;
+    let prev = '';
+    for (const d of days) {
+      run = prev && shiftISO(prev, 1) === d ? run + 1 : 1;
+      prev = d;
+      if (run > best) best = run;
+    }
+    return best;
   }
 
   /* -------------------------------------------------------------- medals */
@@ -311,9 +410,16 @@ class ProgressStore {
     return this.state.medals.includes(levelId);
   }
 
-  /** A cheap reason to open the app tomorrow. */
-  private applyDailyTopUp(): void {
-    const today = new Date().toISOString().slice(0, 10);
+  /**
+   * A cheap reason to open the app tomorrow.
+   *
+   * LOCAL date, via the same helper the Daily Fold uses. This ran on UTC while
+   * the fold rolled over locally, so west of Greenwich the pill's own promise —
+   * "one more lands tomorrow" — pointed at a different day than the fold it was
+   * offered on.
+   */
+  applyDailyTopUp(now: Date = new Date()): void {
+    const today = todayISO(now);
     if (this.state.lastTopUp === today) return;
     this.update({
       lastTopUp: today,

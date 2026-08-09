@@ -54,11 +54,29 @@ export class MenuScene extends Phaser.Scene {
 
     // Clear of the wordmark's reflection, which hangs a full line-height below
     // the baseline — overlapping it made both unreadable.
-    const tagline = label(this, cx, pt(295), 'one line. two answers.', {
-      size: TYPE.body,
-      alpha: 0.42,
-      font: FONT.display,
-    }).setOrigin(0.5, 0);
+    /*
+     * The end of the campaign, said once.
+     *
+     * Clearing the three-hundredth maze used to drop the player back on the
+     * level grid with no acknowledgement at all — the one moment in the game
+     * that has genuinely been earned, and the game looked away. It reads as the
+     * tagline's replacement rather than a modal, because a trophy screen would
+     * be a bigger interruption than the achievement deserves.
+     */
+    const finished = this.registry.get('campaignComplete') === true;
+    if (finished) this.registry.remove('campaignComplete');
+
+    const tagline = label(
+      this,
+      cx,
+      pt(295),
+      finished ? 'all 300 folded. the daily is still yours.' : 'one line. two answers.',
+      {
+        size: TYPE.body,
+        alpha: finished ? 0.62 : 0.42,
+        font: FONT.display,
+      }
+    ).setOrigin(0.5, 0);
 
     /*
      * Lay the actions out as a stack from a fixed top, rather than hand-placing
@@ -124,9 +142,14 @@ export class MenuScene extends Phaser.Scene {
       sub: dailySub,
       onPress: () => {
         Haptics.tap();
-        this.scene.start('Game', { daily: today });
+        // Re-derived at the tap, never the captured `today` above: a phone left
+        // on this screen overnight would otherwise open yesterday's fold and
+        // write the result under yesterday's date.
+        this.scene.start('Game', { daily: todayISO() });
       },
     });
+
+    this.watchForRollover(today);
 
     // Levels and Gallery share a row: both are places you browse, and the
     // stack has to fit the Daily above them and the store below.
@@ -227,6 +250,28 @@ export class MenuScene extends Phaser.Scene {
 
     c.add([g, temp]);
     return c;
+  }
+
+  /**
+   * Rebuild the menu when the calendar day changes underneath it.
+   *
+   * The daily row is rendered once in `create()`, and a Phaser scene is not
+   * re-created when the app comes back from the background. A phone left on
+   * this screen overnight therefore kept showing yesterday's "solved · 4 day
+   * streak" against today's unsolved fold — and the free reveal top-up, which
+   * is also keyed to the day, never ran.
+   */
+  private watchForRollover(builtFor: string): void {
+    const check = (): void => {
+      if (document.visibilityState !== 'visible') return;
+      if (todayISO() === builtFor) return;
+      Progress.applyDailyTopUp();
+      this.scene.restart();
+    };
+    document.addEventListener('visibilitychange', check);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      document.removeEventListener('visibilitychange', check);
+    });
   }
 
   private open(index: number): void {

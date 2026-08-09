@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	Privacy manifest for the App target.
+
+	Foldwing itself has no server, no account and sends nothing anywhere, so
+	NSPrivacyCollectedDataTypes is empty: everything the App Privacy label
+	declares (Device ID, Product Interaction, both for third-party advertising
+	and both used for tracking) is collected by Google AdMob, whose own
+	manifests ship inside GoogleMobileAds and UserMessagingPlatform. Declaring
+	it a second time here would claim the app collects data it never touches.
+
+	NSPrivacyTracking is nonetheless TRUE, because the app is the thing that
+	asks for ATT permission and serves personalized ads once granted. The
+	tracking domains are declared by the AdMob SDK's own manifest.
+
+	The two accessed-API entries exist because the Capacitor plugins that use
+	them ship NO manifest of their own (verified: @capacitor/preferences and
+	@capacitor/filesystem contain no .xcprivacy; only @capacitor/ios core does),
+	so the app target has to declare them or Apple returns ITMS-91053.
+-->
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<true/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<dict>
+			<!-- @capacitor/preferences → UserDefaults. Progress is read and
+			     written only by this app, for this app. -->
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+		<dict>
+			<!-- @capacitor/filesystem → the share card is written into the app's
+			     own Cache directory and handed to the share sheet. -->
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

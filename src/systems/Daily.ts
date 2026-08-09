@@ -16,23 +16,30 @@
 import { makeCandidate } from '../core/MazeGen';
 import {
   interlock,
+  MIN_DECOY,
+  MIN_INTERLOCK,
+  MIN_WINDING,
   PLAYABLE_CLEARANCE,
   routeArc,
   validateLevel,
 } from '../core/LevelValidator';
 import { Playfield } from '../core/Playfield';
 import { BASE_HEIGHT, BASE_WIDTH, METRICS } from '../render/Theme';
+import { TUTORIAL_LEVELS } from '../data/tutorialLevels';
 import type { Level } from '../data/types';
+
+export { todayISO } from '../core/CalendarDay';
 
 const VOPTS = { cell: 6, hitRadius: METRICS.hitRadius, goalRadius: METRICS.goalRadius };
 
-/** Local calendar date — a fold rolls over at the player's midnight. */
-export function todayISO(now = new Date()): string {
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-}
+/**
+ * Seeds are spaced by the widest candidate run so two adjacent days can never
+ * draw from the same stretch of the sequence. At 100 the tail of day N's window
+ * was arithmetically the head of day N+1's — inert in practice, since the
+ * accepted candidate is almost always the first or second, but it made
+ * "different date, different maze" true by luck rather than by construction.
+ */
+const SEED_STRIDE = 1000;
 
 export function dailySeed(dateISO: string): number {
   return Number(dateISO.replace(/-/g, ''));
@@ -51,36 +58,59 @@ export function dailyLevel(dateISO: string): Level {
   if (hit) return hit;
 
   const pf = new Playfield(BASE_WIDTH, BASE_HEIGHT, METRICS.inset);
-  const base = dailySeed(dateISO) * 100;
+  const base = dailySeed(dateISO) * SEED_STRIDE;
   const t = dailyT(dateISO);
 
-  let fallback: Level | null = null;
+  /*
+   * The fallback is a PROVED level, never a raw candidate.
+   *
+   * The old code ended `fallback ?? makeCandidate(base, t).level`, and that
+   * right-hand side had passed no validator, no interlock check and no winding
+   * check — the only path in the entire game that could put an unproven maze in
+   * front of a player, in the one mode where every player in the world gets the
+   * same one. Measured over 180 dates it never fired, which is exactly why it
+   * would have been discovered by a player rather than by us.
+   *
+   * Now the loop cannot end without something `validateLevel` has cleared with
+   * room for a hand, and if even that is impossible the daily falls back to a
+   * hand-authored tutorial level rather than inventing one.
+   */
+  let playableOnly: Level | null = null;
+
   for (let k = 0; k < 200; k++) {
-    const { level } = makeCandidate(base + k, t);
+    const { level, decoy } = makeCandidate(base + k, t);
     const playable = validateLevel(level, pf, {
       ...VOPTS,
       hitRadius: METRICS.hitRadius + PLAYABLE_CLEARANCE,
     }).solvable;
     if (!playable) continue;
-    fallback = fallback ?? level;
-    if (interlock(level) < 0.08) continue;
-    const route = routeArc(level, pf, VOPTS);
-    if (!route || route.arc / route.direct < 1.35) continue;
 
-    const daily: Level = {
-      ...level,
-      id: `d${dateISO}`,
-      name: 'Daily fold',
-      parPx: Math.round(route.arc),
-    };
-    cache.set(dateISO, daily);
-    return daily;
+    const route = routeArc(level, pf, VOPTS);
+    if (!route) continue;
+
+    // First maze that is merely playable, kept in case nothing clears the rest.
+    playableOnly ??= finish(dateISO, level, Math.round(route.arc));
+
+    if (interlock(level) < MIN_INTERLOCK) continue;
+    if (route.arc / route.direct < MIN_WINDING) continue;
+    if (decoy < MIN_DECOY) continue;
+
+    return remember(dateISO, finish(dateISO, level, Math.round(route.arc)));
   }
 
-  // Two hundred candidates without a full pass has never been observed; a
-  // merely-playable maze is still a correct daily, and still deterministic.
-  const last = fallback ?? makeCandidate(base, t).level;
-  const daily: Level = { ...last, id: `d${dateISO}`, name: 'Daily fold' };
-  cache.set(dateISO, daily);
-  return daily;
+  if (playableOnly) return remember(dateISO, playableOnly);
+
+  // Two hundred unplayable candidates has never been observed and would mean
+  // the generator itself is broken. Serving a proved hand-authored level beats
+  // serving a maze nobody has proved anyone can finish.
+  return remember(dateISO, finish(dateISO, TUTORIAL_LEVELS[4], undefined));
+}
+
+function finish(dateISO: string, level: Level, parPx: number | undefined): Level {
+  return { ...level, id: `d${dateISO}`, name: 'Daily fold', parPx };
+}
+
+function remember(dateISO: string, level: Level): Level {
+  cache.set(dateISO, level);
+  return level;
 }

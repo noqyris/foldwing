@@ -80,6 +80,16 @@ const LIVE_IOS: AdUnits = {
   rewarded: 'ca-app-pub-3307486877162157/5113234608',
 };
 
+/**
+ * Empty ON PURPOSE — there is no Play listing and therefore no Android AdMob
+ * app to draw ids from. `adsConfigured()` reads the interstitial slot and
+ * returns false for a blank one, so on Android every ad path no-ops cleanly
+ * instead of firing requests that could only fail.
+ *
+ * Fill these in at the same moment the Play listing is created, not before: a
+ * half-filled set is worse than an empty one, because `adsConfigured()` would
+ * then report true and the requests would start failing for real.
+ */
 const LIVE_ANDROID: AdUnits = {
   appId: '',
   banner: '',
@@ -89,20 +99,24 @@ const LIVE_ANDROID: AdUnits = {
 
 export const monetization = {
   /**
-   * TRUE while developing and on TestFlight. The live ids below are real and
-   * ready — this is the ONLY switch left to flip for the store build.
+   * FALSE is the submission state, and the default.
    *
-   * It stays true for TestFlight on purpose. The AdMob app is new and shows
-   * "Requires review / Limited ad serving" until the app is public on the App
-   * Store, so live units return no-fill and a TestFlight build would show no
-   * ads at all and look broken. Test ads actually render, which is what makes
-   * placement and cadence judgeable.
+   * Flipping it to true swaps in Google's test units, which actually render —
+   * useful for judging placement, because a new AdMob app shows "Requires
+   * review / Limited ad serving" until the app is public, so live units
+   * return no-fill and a TestFlight build looks broken.
    *
-   * Flip to false for the App Store submission build. Shipping Google's test
-   * ads to real users violates AdMob policy, and clicking your own LIVE ads is
-   * invalid traffic — the most common way to get an AdMob account banned.
+   * If you do flip it, flip `GADApplicationIdentifier` in Info.plist with it
+   * and FLIP BOTH BACK BEFORE ARCHIVING. Shipping Google's test ads to real
+   * users violates AdMob policy, and clicking your own LIVE ads is invalid
+   * traffic — the most common way to get an AdMob account banned.
+   *
+   * `monetization.test.ts` pins the two together, and — because "both on TEST"
+   * used to be a PASSING state and shipped that way into build 19 — a separate
+   * test now fails outright on Google's test publisher id in the plist,
+   * whatever this flag says.
    */
-  useTestAds: true,
+  useTestAds: false,
 
   products: {
     /** Non-consumable. Kills the banner and interstitials, unlocks unlimited reveals. */
