@@ -20,7 +20,7 @@ import {
 } from '../core/StrokeRecorder';
 import { buildRibbon, DEFAULT_RIBBON, type RibbonOptions } from '../core/Ribbon';
 import type { Playfield } from '../core/Playfield';
-import { BASE_HEIGHT, BASE_WIDTH, type InkTheme, METRICS, pt, theme } from './Theme';
+import { BASE_HEIGHT, BASE_WIDTH, type InkTheme, METRICS, ms, pt, theme } from './Theme';
 
 const DEPTH = {
   level: 10,
@@ -250,14 +250,14 @@ export class InkRenderer {
     this.scene.tweens.add({
       targets: g,
       alpha: 0.16,
-      duration: 220,
+      duration: ms(220),
       ease: 'Quad.easeOut',
       onComplete: () => {
         this.scene.tweens.add({
           targets: g,
           alpha: 0,
           delay: durationMs,
-          duration: 420,
+          duration: ms(420),
           ease: 'Quad.easeIn',
           onComplete: () => g.clear(),
         });
@@ -294,7 +294,7 @@ export class InkRenderer {
 
   clearGhost(): void {
     this.scene.tweens.killTweensOf(this.ghostG);
-    this.scene.tweens.add({ targets: this.ghostG, alpha: 0, duration: 200 });
+    this.scene.tweens.add({ targets: this.ghostG, alpha: 0, duration: ms(200) });
   }
 
   clearReveal(): void {
@@ -326,7 +326,7 @@ export class InkRenderer {
       targets: layer,
       scale: 1,
       delay: METRICS.winHoldMs,
-      duration: METRICS.winSettleMs,
+      duration: ms(METRICS.winSettleMs),
       ease: 'Cubic.easeOut',
     });
   }

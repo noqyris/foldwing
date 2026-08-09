@@ -10,11 +10,12 @@
 import Phaser from 'phaser';
 import { LEVELS } from '../data/levels';
 import { Ads } from '../systems/Ads';
+import { Audio } from '../systems/Audio';
 import { todayISO } from '../systems/Daily';
 import { Haptics } from '../systems/Haptics';
 import { applyEntitlement, Iap } from '../systems/Iap';
-import { Progress } from '../systems/Progress';
-import { BASE_WIDTH, pt, theme } from '../render/Theme';
+import { Progress, type SaveData } from '../systems/Progress';
+import { BASE_HEIGHT, BASE_WIDTH, METRICS, pt, setMotionScale, theme } from '../render/Theme';
 import {
   button,
   COLUMN,
@@ -23,12 +24,16 @@ import {
   label,
   RADIUS,
   roundRect,
+  softShadow,
   SPACE,
+  tappable,
   TYPE,
   wordmark,
 } from '../render/UI';
 
 export class MenuScene extends Phaser.Scene {
+  private settingsSheet: Phaser.GameObjects.Container | null = null;
+
   constructor() {
     super('Menu');
   }
@@ -52,10 +57,11 @@ export class MenuScene extends Phaser.Scene {
 
     const mark = wordmark(this, cx, pt(215));
 
-    // Clear of the wordmark's reflection, which hangs a full line-height below
-    // the baseline — overlapping it made both unreadable.
     /*
-     * The end of the campaign, said once.
+     * The tagline sits clear of the wordmark's reflection, which hangs a full
+     * line-height below the baseline — overlapping it made both unreadable.
+     *
+     * The end of the campaign is said once, here, in its place.
      *
      * Clearing the three-hundredth maze used to drop the player back on the
      * level grid with no acknowledgement at all — the one moment in the game
@@ -217,10 +223,136 @@ export class MenuScene extends Phaser.Scene {
     // reveals" for owners, and the two were drawn 12px apart, overlapping by
     // more than half a line — both illegible.
 
+    /*
+     * Settings sits OUTSIDE the vertical stack, top-right.
+     *
+     * The stack's geometry is derived from its row count and already runs to
+     * within a few pixels of the banner line when there is a purchase to offer
+     * — a sixth row is what put "Restore purchases" half off the canvas once
+     * before. A corner control costs the stack nothing and is where a settings
+     * control is looked for anyway.
+     */
+    entering.push(
+      button(this, BASE_WIDTH - METRICS.inset.left - pt(30), pt(64), '•••', {
+        width: pt(52),
+        height: pt(40),
+        variant: 'ghost',
+        size: TYPE.body,
+        onPress: () => this.openSettings(),
+      })
+    );
+
     enter(this, entering);
 
     // The banner lives here and on level select. Never over the playfield.
     void Ads.showBanner();
+  }
+
+  /* ------------------------------------------------------------- settings */
+
+  /**
+   * Sound, haptics and reduced motion.
+   *
+   * All three services had a `setEnabled` and no caller, so every one of them
+   * was permanently on — including for players who need them not to be. The
+   * sheet is deliberately three rows and nothing else: anything the game can
+   * decide for the player, it already has.
+   */
+  private openSettings(): void {
+    if (this.settingsSheet) return;
+    Haptics.tap();
+
+    const t = theme();
+    const cx = BASE_WIDTH / 2;
+    const w = COLUMN;
+    const rowH = pt(46);
+    const h = pt(58) + rowH * 3 + pt(16);
+
+    const sheet = this.add.container(cx, BASE_HEIGHT / 2).setDepth(60);
+    this.settingsSheet = sheet;
+
+    const scrim = this.add
+      .rectangle(0, 0, BASE_WIDTH * 2, BASE_HEIGHT * 2, t.ink, 0.32)
+      .setInteractive();
+    scrim.on('pointerdown', () => this.closeSettings());
+
+    const card = this.add.graphics();
+    softShadow(card, -w / 2, -h / 2, w, h, RADIUS.md, 1);
+    card.fillStyle(t.paper, 1);
+    roundRect(card, -w / 2, -h / 2, w, h, RADIUS.md);
+
+    sheet.add([scrim, card]);
+    sheet.add(
+      label(this, 0, -h / 2 + pt(26), 'Settings', {
+        size: TYPE.heading,
+        font: FONT.ui,
+      }).setOrigin(0.5)
+    );
+
+    const rows: [string, keyof SaveData, (v: boolean) => void][] = [
+      ['Sound', 'sound', (v) => Audio.setEnabled(v)],
+      ['Haptics', 'haptics', (v) => Haptics.setEnabled(v)],
+      ['Reduced motion', 'reducedMotion', (v) => setMotionScale(v)],
+    ];
+
+    rows.forEach(([text, key, apply], i) => {
+      const y = -h / 2 + pt(58) + rowH * i + rowH / 2;
+      sheet.add(this.buildToggleRow(y, w, rowH, text, key, apply));
+    });
+
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.closeSettings());
+  }
+
+  private buildToggleRow(
+    y: number,
+    w: number,
+    h: number,
+    text: string,
+    key: keyof SaveData,
+    apply: (v: boolean) => void
+  ): Phaser.GameObjects.Container {
+    const t = theme();
+    const row = this.add.container(0, y);
+    const pad = pt(18);
+
+    const name = label(this, -w / 2 + pad, 0, text, { size: TYPE.body, alpha: 0.9 })
+      .setOrigin(0, 0.5);
+
+    const state = label(this, w / 2 - pad, 0, '', { size: TYPE.body, alpha: 0.55 })
+      .setOrigin(1, 0.5);
+
+    const paint = (): void => {
+      const on = Progress.data[key] === true;
+      state.setText(on ? 'on' : 'off').setAlpha(on ? 0.75 : 0.35);
+    };
+    paint();
+
+    row.add([name, state]);
+    row.setSize(w, h);
+    tappable(row, w, h);
+    row.on('pointerdown', () => {
+      const next = Progress.data[key] !== true;
+      Progress.update({ [key]: next } as Partial<SaveData>);
+      apply(next);
+      // Feedback for the haptics row has to fire on the way OUT, or turning it
+      // off would still buzz. Audio.setEnabled has already applied by here.
+      Haptics.tap();
+      paint();
+    });
+
+    // A hairline between rows, not around them: three boxed cards for three
+    // switches is more chrome than the content.
+    const line = this.add.graphics();
+    line.fillStyle(t.ink, 0.07);
+    line.fillRect(-w / 2 + pad, h / 2 - 1, w - pad * 2, 1);
+    row.add(line);
+
+    return row;
+  }
+
+  private closeSettings(): void {
+    this.settingsSheet?.destroy(true);
+    this.settingsSheet = null;
   }
 
   /** The stash badge — a reveal only feels like a currency if it is visible. */

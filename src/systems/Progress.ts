@@ -101,6 +101,16 @@ export interface SaveData {
   medals: string[];
   /** Fold Sense: EMA of recent win scores, 0..100. 0 = not yet rated. */
   foldSense: number;
+  /** Player settings. Default-on, because the game is better with them. */
+  sound: boolean;
+  haptics: boolean;
+  /**
+   * Reduced motion. The game leans on tweens for the win figure and the sheets;
+   * this shortens them to near-instant rather than removing the feedback, so a
+   * player who is motion-sensitive still sees WHAT happened, just not the
+   * travel. Seeded from the OS setting on a fresh save.
+   */
+  reducedMotion: boolean;
 }
 
 /**
@@ -141,7 +151,19 @@ function freshSave(): SaveData {
     daily: {},
     medals: [],
     foldSense: 0,
+    sound: true,
+    haptics: true,
+    reducedMotion: prefersReducedMotion(),
   };
+}
+
+/** The OS-level preference, when the platform exposes one. */
+function prefersReducedMotion(): boolean {
+  try {
+    return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+  } catch {
+    return false;
+  }
 }
 
 /** Merge over a fresh save so a save written by an older build never has holes. */
@@ -243,6 +265,11 @@ function coerce(raw: unknown): SaveData {
         ? r.medals.filter((m) => typeof m === 'string')
         : base.medals,
     foldSense: Math.min(100, count(r.foldSense, base.foldSense)),
+    // A missing flag means a save written before settings existed, so it takes
+    // the default rather than reading `undefined !== false` as "off".
+    sound: r.sound !== false,
+    haptics: r.haptics !== false,
+    reducedMotion: typeof r.reducedMotion === 'boolean' ? r.reducedMotion : base.reducedMotion,
   };
 }
 

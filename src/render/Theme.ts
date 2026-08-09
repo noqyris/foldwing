@@ -110,6 +110,25 @@ export function rgba(color: number, alpha: number): string {
 
 /* ---------------------------------------------------------------- metrics */
 
+/**
+ * Animation scale, 1 normally and near-zero under reduced motion.
+ *
+ * Set once from the save at boot rather than read per-tween, so nothing in the
+ * render layer has to import Progress. Reduced motion SHORTENS rather than
+ * removes: the win figure still blooms and a sheet still arrives, so the player
+ * sees what happened — they just are not carried through the travel.
+ */
+let motion = 1;
+
+export function setMotionScale(reduced: boolean): void {
+  motion = reduced ? 0.12 : 1;
+}
+
+/** Scale a duration in ms. Never returns 0 — a 0ms tween skips its onComplete. */
+export function ms(base: number): number {
+  return Math.max(1, Math.round(base * motion));
+}
+
 export const METRICS = {
   /**
    * LOCKED. Collision radius 2.6pt against a 5pt rendered nib.

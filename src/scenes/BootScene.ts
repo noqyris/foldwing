@@ -12,11 +12,13 @@
 
 import Phaser from 'phaser';
 import { Ads } from '../systems/Ads';
+import { Audio } from '../systems/Audio';
 import { todayISO } from '../systems/Daily';
+import { Haptics } from '../systems/Haptics';
 import { Iap } from '../systems/Iap';
 import { Progress } from '../systems/Progress';
 import { WEB_DAILY } from '../systems/WebDaily';
-import { theme } from '../render/Theme';
+import { setMotionScale, theme } from '../render/Theme';
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -28,6 +30,13 @@ export class BootScene extends Phaser.Scene {
 
     Progress.installLifecycleFlush();
     void Progress.load().then((save) => {
+      // Apply the player's settings before the first scene that could make a
+      // sound or buzz. Both services defaulted to on and had no caller at all
+      // until settings existed.
+      Audio.setEnabled(save.sound);
+      Haptics.setEnabled(save.haptics);
+      setMotionScale(save.reducedMotion);
+
       // The web daily is the whole product on the web: no menu, no store,
       // straight into today's fold.
       if (WEB_DAILY) {

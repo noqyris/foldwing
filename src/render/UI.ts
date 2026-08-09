@@ -14,7 +14,7 @@
 
 import Phaser from 'phaser';
 import { centredHitArea } from './HitArea';
-import { BASE_WIDTH, METRICS, pt, rgba, theme } from './Theme';
+import { BASE_WIDTH, METRICS, ms, pt, rgba, theme } from './Theme';
 
 /**
  * Make a centre-drawn container tappable over its whole face.
@@ -361,8 +361,8 @@ export function enter(
       targets: o,
       y: restY,
       alpha: 1,
-      duration: 420,
-      delay: i * stagger,
+      duration: ms(420),
+      delay: ms(i * stagger),
       ease: 'Cubic.easeOut',
     });
   });
