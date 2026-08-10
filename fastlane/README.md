@@ -13,6 +13,17 @@ For _fastlane_ installation instructions, see [Installing _fastlane_](https://do
 
 # Available Actions
 
+### tf_state
+
+```sh
+[bundle exec] fastlane tf_state
+```
+
+Read-only: what beta groups, testers and ASC users exist today
+
+----
+
+
 ## iOS
 
 ### ios verify

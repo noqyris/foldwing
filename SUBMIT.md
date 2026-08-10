@@ -109,6 +109,25 @@ down what went out for 15 through 18. Rows are not invented here to fill the
 gap — an invented row is worse than a missing one, because a missing row makes
 you go and look. Go and look: App Store Connect → TestFlight → Builds.
 
+### Uploaded is not the same as installable
+
+Builds 19 to 22 all sat on App Store Connect as `VALID` and none of them ever
+reached a phone. `upload_to_testflight` ran with
+`skip_waiting_for_build_processing: true`, which returns as soon as the bytes
+are accepted — and a build that has not finished processing cannot be
+distributed, so it never was. The internal group compounds it: it was created
+without `hasAccessToAllBuilds`, and that flag is **create-only** (Apple answers
+"can not be included in a 'UPDATE' operation"), so the group only ever shows
+builds handed to it explicitly.
+
+The upload lanes now wait for processing and distribute to the `Internal` group,
+which costs a few minutes and is the difference between "the upload succeeded"
+and "I can install it". For a build already uploaded, `asc-tf-groups assign
+--app com.noqyris.foldwing` hands the newest processed one over.
+
+Check `internal=IN_BETA_TESTING`, not `processing=VALID`:
+`asc-tf-groups builds --app com.noqyris.foldwing`.
+
 **From now on the ledger is updated at upload time, in the same commit as the
 version bump.** A row written afterwards is a row written from memory, and the
 whole point of this table is that memory is what failed.
