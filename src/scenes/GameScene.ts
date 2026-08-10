@@ -48,7 +48,7 @@ import { Rate } from '../systems/Rate';
 import { Share } from '../systems/Share';
 import { InkRenderer } from '../render/InkRenderer';
 import { renderShareCard } from '../render/ShareCard';
-import { BASE_HEIGHT, BASE_WIDTH, METRICS, pt, theme } from '../render/Theme';
+import { BASE_HEIGHT, BASE_WIDTH, METRICS, ms, pt, theme } from '../render/Theme';
 import {
   button,
   FONT,
@@ -143,6 +143,8 @@ export class GameScene extends Phaser.Scene {
   private winSense = 0;
   /** The previous failed attempt, redrawn as a ghost on the next try. */
   private lastAttempt: Vec2[] | null = null;
+  /** A teaching line that outlives a failed or abandoned attempt. */
+  private hintSticky = false;
   private revealOfferPill: Phaser.GameObjects.Container | null = null;
   private refillSheet: Phaser.GameObjects.Container | null = null;
   private webDailyEnd: Phaser.GameObjects.Container | null = null;
@@ -237,9 +239,23 @@ export class GameScene extends Phaser.Scene {
     for (const w of [...walls, ...this.mirrorBands]) {
       mids.add(Math.round(w.y + w.h / 2));
     }
-    this.gates = [...mids]
-      .sort((a, b) => b - a)
-      .map((mid) => ({ mid, passed: false }));
+    /*
+     * Collapse rows the eye reads as one.
+     *
+     * Deduping on the exact rounded midpoint is not enough: measured across the
+     * shipped set, 1044 pairs of walls sit within 10px of each other, on 272 of
+     * the 300 levels, some as close as 1px. Each pair fired two notes and two
+     * haptic ticks in the same frame — a chord and a double-buzz where the
+     * player crossed one row. `mid` is only read by the crossing test, so
+     * keeping the higher of a close pair loses nothing.
+     */
+    const ROW_MERGE = pt(8);
+    this.gates = [];
+    for (const mid of [...mids].sort((a, b) => b - a)) {
+      const prev = this.gates[this.gates.length - 1];
+      if (prev && Math.abs(prev.mid - mid) < ROW_MERGE) continue;
+      this.gates.push({ mid, passed: false });
+    }
 
     this.attempts = 0;
     this.advancing = false;
@@ -273,14 +289,14 @@ export class GameScene extends Phaser.Scene {
      * the fold, and Reveal is the tool for exactly that.
      */
     if (!this.dailyDate && this.levelIndex === 0 && !Progress.hasCleared('l1')) {
-      this.showHint('press the dot and draw to the ring', 900);
+      this.showHint('press the dot and draw to the ring', 900, true);
       this.time.delayedCall(8000, () => {
         if (this.phase === 'idle') this.hideHint();
       });
     }
 
     if (this.levelIndex === 5 && !this.dailyDate && !Progress.hasCleared('l6')) {
-      this.showHint('stuck? Reveal shows the walls folded from the far half', 900);
+      this.showHint('stuck? Reveal shows the walls folded from the far half', 900, true);
       this.time.delayedCall(7000, () => {
         if (this.phase !== 'won') this.hideHint();
       });
@@ -310,6 +326,11 @@ export class GameScene extends Phaser.Scene {
       // A tap anywhere means "next", so the share button has to carve itself
       // out — otherwise reaching for it would skip past the figure instead.
       if (this.overSharePill(pointer)) return;
+      // Nor does the header row. The back chevron and the reveal pill live up
+      // there, and a tap that means "leave" or "spend a reveal" was also being
+      // read as "next level" — so backing out flashed the next maze first, and
+      // tapping the counter advanced AND then spent a reveal on the new level.
+      if (pointer.y < METRICS.inset.top + pt(10)) return;
       if (this.time.now >= this.advanceReadyAt) void this.advance();
       return;
     }
@@ -549,6 +570,11 @@ export class GameScene extends Phaser.Scene {
     this.ink.presentWin(this.recorder.points, this.recorder.times);
     Audio.chime();
     this.clearSkipOffer();
+    // The reveal offer has to go too. It sets no depth, so it paints over the
+    // share pill's opaque backing, and it lies: tapping it reveals nothing —
+    // clearRevealOffer is the only thing on the win path that removes it, and
+    // resetToIdle (which does) does not run until the next level.
+    this.clearRevealOffer();
 
     /*
      * One number for both: the tap gate and the prompt that invites the tap.
@@ -556,7 +582,7 @@ export class GameScene extends Phaser.Scene {
      * "tap for the next fold" during a window where taps are still being
      * dropped, and the player's first, obedient tap does nothing.
      */
-    const readyIn = METRICS.winHoldMs + METRICS.winSettleMs + 250;
+    const readyIn = ms(METRICS.winHoldMs) + ms(METRICS.winSettleMs) + ms(250);
     this.advanceReadyAt = this.time.now + readyIn;
 
     this.refreshHud();
@@ -573,7 +599,16 @@ export class GameScene extends Phaser.Scene {
       Progress.data.winsSinceAd
     );
     if (Rate.shouldAsk(adWillShow)) {
-      this.time.delayedCall(readyIn + 400, () => void Rate.ask());
+      this.time.delayedCall(readyIn + 400, () => {
+        // Still on the win screen, and no ad on the way. loadLevel puts the
+        // phase back to 'idle' and advance() sets `advancing` synchronously, so
+        // between them these two cover "they already tapped through". The app
+        // gets ONE lifetime prompt (the OS throttles to about three a year);
+        // spending it on top of the next maze or an interstitial wastes it
+        // permanently. Skipping simply asks after the next win.
+        if (this.phase !== 'won' || this.advancing) return;
+        void Rate.ask();
+      });
     }
   }
 
@@ -588,7 +623,7 @@ export class GameScene extends Phaser.Scene {
     this.phase = 'idle';
     this.activePointer = null;
     this.clearShareOffer();
-    this.hideHint();
+    if (!this.hintSticky) this.hideHint();
     // The previous attempt lingers as a ghost until the next stroke begins:
     // where it died is the one fact the player needs for the next plan.
     if (this.lastAttempt) this.ink.showGhost(this.lastAttempt);
@@ -810,6 +845,14 @@ export class GameScene extends Phaser.Scene {
    */
   private async maybeAdOnRetry(): Promise<void> {
     if (this.phase !== 'idle' || this.advancing) return;
+    /*
+     * Never over an open sheet. The reveal pill answers its own pointer events,
+     * so a player who jabs it during the 400ms fail flash opens the
+     * out-of-reveals sheet a fraction of a second before this fires — and a
+     * full-screen interstitial lands on top of a store sheet the player opened.
+     * That is also the exact geometry AdMob disables serving over.
+     */
+    if (this.refillSheet || this.webDailyEnd) return;
     if (!Ads.wouldShowOnAttempt(this.onboardingIndex, Progress.data.attemptsSinceAd)) return;
 
     const shown = await Ads.showInterstitial();
@@ -848,7 +891,24 @@ export class GameScene extends Phaser.Scene {
     pill.setAlpha(0);
     this.sharePill = pill;
 
-    this.tweens.add({ targets: pill, alpha: 1, delay, duration: 300 });
+    /*
+     * Fully opaque BEFORE taps go live, not at the same moment.
+     *
+     * `overSharePill` deliberately ignores a pill under half alpha, so an
+     * invisible control cannot be pressed. But the fade used to start exactly
+     * when the advance gate opened, so for the ~150ms it took to cross that
+     * threshold a reach for the button was read as "next level" — and then the
+     * button's own pointerup still fired, landing the player on the next maze
+     * with a share sheet for the figure they had just left. Starting the fade
+     * earlier closes the window from the other side, without loosening the
+     * alpha rule that keeps an invisible pill untappable.
+     */
+    this.tweens.add({
+      targets: pill,
+      alpha: 1,
+      delay: Math.max(0, delay - ms(300)),
+      duration: ms(300),
+    });
   }
 
   private clearShareOffer(): void {
@@ -1027,7 +1087,7 @@ export class GameScene extends Phaser.Scene {
       onPress: () => void this.doSkip(),
     });
     this.skipPill.setAlpha(0);
-    this.tweens.add({ targets: this.skipPill, alpha: 1, duration: 300 });
+    this.tweens.add({ targets: this.skipPill, alpha: 1, duration: ms(300) });
   }
 
   private clearSkipOffer(): void {
@@ -1056,7 +1116,7 @@ export class GameScene extends Phaser.Scene {
       },
     });
     this.revealOfferPill.setAlpha(0);
-    this.tweens.add({ targets: this.revealOfferPill, alpha: 1, duration: 300 });
+    this.tweens.add({ targets: this.revealOfferPill, alpha: 1, duration: ms(300) });
   }
 
   private clearRevealOffer(): void {
@@ -1189,13 +1249,13 @@ export class GameScene extends Phaser.Scene {
       armed = true;
       downX = p.x;
       downY = p.y;
-      this.tweens.add({ targets: c, scale: 0.93, duration: 90, ease: 'Quad.easeOut' });
+      this.tweens.add({ targets: c, scale: 0.93, duration: ms(90), ease: 'Quad.easeOut' });
     });
 
     const onUp = (p: Phaser.Input.Pointer): void => {
       if (!armed) return;
       armed = false;
-      this.tweens.add({ targets: c, scale: 1, duration: 280, ease: 'Back.easeOut' });
+      this.tweens.add({ targets: c, scale: 1, duration: ms(280), ease: 'Back.easeOut' });
       if (Phaser.Math.Distance.Between(downX, downY, p.x, p.y) > TAP_SLOP) return;
       if (
         p.x < c.x - w / 2 || p.x > c.x + w / 2 ||
@@ -1248,19 +1308,30 @@ export class GameScene extends Phaser.Scene {
     this.revealPill.setAlpha(n > 0 || refillable ? 1 : 0.35);
   }
 
-  private showHint(message: string, delay: number): void {
+  /**
+   * @param sticky Survive `resetToIdle`. The two teaching lines need this: they
+   *   were budgeted eight and seven seconds and got about three, because
+   *   resetToIdle hides the hint and it runs at the end of EVERY abandoned
+   *   stroke and every fail flash. A first-timer's first act is to lift a
+   *   finger short of the ring, which deleted "press the dot and draw to the
+   *   ring" before they had read it; level 6 deleted the line explaining Reveal
+   *   at the first death, which is the moment it becomes true.
+   */
+  private showHint(message: string, delay: number, sticky = false): void {
+    this.hintSticky = sticky;
     this.hintText.setText(message);
     this.tweens.killTweensOf(this.hintText);
     this.tweens.add({
       targets: this.hintText,
       alpha: 1,
       delay,
-      duration: 300,
+      duration: ms(300),
       ease: 'Quad.easeOut',
     });
   }
 
   private hideHint(): void {
+    this.hintSticky = false;
     this.tweens.killTweensOf(this.hintText);
     this.hintText.setAlpha(0);
   }

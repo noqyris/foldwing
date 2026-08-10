@@ -15,7 +15,7 @@ import { todayISO } from '../systems/Daily';
 import { Haptics } from '../systems/Haptics';
 import { applyEntitlement, Iap } from '../systems/Iap';
 import { Progress, type SaveData } from '../systems/Progress';
-import { BASE_HEIGHT, BASE_WIDTH, METRICS, pt, setMotionScale, theme } from '../render/Theme';
+import { BASE_HEIGHT, BASE_WIDTH, METRICS, ms, pt, setMotionScale, theme } from '../render/Theme';
 import {
   button,
   COLUMN,
@@ -33,6 +33,9 @@ import {
 
 export class MenuScene extends Phaser.Scene {
   private settingsSheet: Phaser.GameObjects.Container | null = null;
+  /** A store round-trip is in flight; a second tap must not place a second order. */
+  private busy = false;
+  private flashText: Phaser.GameObjects.Text | null = null;
 
   constructor() {
     super('Menu');
@@ -415,21 +418,76 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private async purchase(): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
     Haptics.tap();
-    const owned = await Iap.buyRemoveAds();
-    if (!owned) return;
-    Progress.setAdsRemoved(true);
-    Ads.setAdsRemoved(true);
-    this.scene.restart();
+    try {
+      // applyEntitlement is the choke point: it persists the entitlement AND
+      // tells the ad layer, so neither can be forgotten here.
+      const owned = await Iap.buyRemoveAds();
+      if (!owned) {
+        this.flash("the purchase didn't go through");
+        return;
+      }
+      applyEntitlement(true);
+      this.scene.restart();
+    } finally {
+      this.busy = false;
+    }
   }
 
   private async restore(): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
     Haptics.tap();
-    const result = await Iap.restore();
-    applyEntitlement(result);
-    if (result === true) {
-      Ads.setAdsRemoved(true);
-      this.scene.restart();
+    try {
+      const result = await Iap.restore();
+      applyEntitlement(result);
+      /*
+       * Every outcome says something. This used to branch only on `true`, so
+       * both "you own nothing on this Apple Account" and "the store did not
+       * answer" fell off the end in silence — and a tester tapping a button
+       * that never responds reports it as broken, which is exactly right.
+       */
+      if (result === true) {
+        this.scene.restart();
+        return;
+      }
+      this.flash(
+        result === false
+          ? 'nothing to restore on this Apple Account'
+          : "couldn't reach the App Store — try again in a moment"
+      );
+    } finally {
+      this.busy = false;
     }
+  }
+
+  /**
+   * A line of text that appears low on the menu and fades out.
+   *
+   * The menu had no way to say anything at all, which is why the store was
+   * silent on every path that was not a clean success.
+   */
+  private flash(message: string): void {
+    this.flashText?.destroy();
+    const t = label(this, BASE_WIDTH / 2, BASE_HEIGHT - METRICS.inset.bottom - pt(26), message, {
+      size: TYPE.label,
+      alpha: 0.75,
+      align: 'center',
+    })
+      .setOrigin(0.5)
+      .setDepth(80);
+    this.flashText = t;
+    this.tweens.add({
+      targets: t,
+      alpha: 0,
+      delay: ms(2600),
+      duration: ms(400),
+      onComplete: () => {
+        t.destroy();
+        if (this.flashText === t) this.flashText = null;
+      },
+    });
   }
 }

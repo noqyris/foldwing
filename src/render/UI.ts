@@ -261,7 +261,7 @@ export function button(
 
   const settle = (): void => {
     paint(false);
-    scene.tweens.add({ targets: container, scale: 1, duration: 320, ease: 'Back.easeOut' });
+    scene.tweens.add({ targets: container, scale: 1, duration: ms(320), ease: 'Back.easeOut' });
   };
 
   container.on('pointerdown', (p: Phaser.Input.Pointer) => {
@@ -269,7 +269,7 @@ export function button(
     downX = p.x;
     downY = p.y;
     paint(true);
-    scene.tweens.add({ targets: container, scale: 0.965, duration: 90, ease: 'Quad.easeOut' });
+    scene.tweens.add({ targets: container, scale: 0.965, duration: ms(90), ease: 'Quad.easeOut' });
   });
 
   const onUp = (p: Phaser.Input.Pointer): void => {

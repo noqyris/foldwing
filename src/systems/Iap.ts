@@ -21,6 +21,7 @@
 import { Capacitor } from '@capacitor/core';
 import 'cordova-plugin-purchase';
 import { monetization } from '../config/monetization';
+import { Ads } from './Ads';
 import { Progress } from './Progress';
 
 export interface StoreProduct {
@@ -202,9 +203,7 @@ class StoreKitIapService implements IapService {
 
       const before = Progress.data.reveals;
       await offer.order();
-      // The approved handler banks the reveals; a cancel leaves the count as
-      // it was, and that difference is the only honest success signal here.
-      return Progress.data.reveals > before;
+      return settle(() => Progress.data.reveals > before);
     } catch {
       return false;
     }
@@ -218,10 +217,7 @@ class StoreKitIapService implements IapService {
       if (!offer) return false;
 
       await offer.order();
-      // The `approved` handler above does the granting, so read the entitlement
-      // rather than trusting a return value — a cancel and a failure look the
-      // same here, and both simply mean "still whatever it was".
-      return Progress.data.adsRemoved;
+      return settle(() => Progress.data.adsRemoved);
     } catch {
       return Progress.data.adsRemoved;
     }
@@ -240,8 +236,37 @@ class StoreKitIapService implements IapService {
   }
 
   private grant(): void {
-    if (!Progress.data.adsRemoved) Progress.setAdsRemoved(true);
+    applyEntitlement(true);
   }
+}
+
+/**
+ * Wait for the `approved` handler to actually land, then report what it did.
+ *
+ * `order()` does NOT resolve after the entitlement is granted. Traced through
+ * the plugin: the Apple bridge calls `receiptsUpdated` and then the payment
+ * monitor, and it is the MONITOR that resolves `order()` — while
+ * `receiptsUpdated` is debounced 300ms and the store listener adds a further
+ * 500ms before it triggers the approved callbacks. So the grant arrives roughly
+ * 800ms AFTER the await returns, and reading the entitlement on the next line
+ * reported `false` on every first-time success: the player paid, the menu did
+ * not change, and nothing looked different until the next launch.
+ *
+ * Polling rather than a promise from the handler because the handler is also
+ * the path a restore and an already-owned product take, and it must not be
+ * rewired around one caller.
+ */
+async function settle(
+  isDone: () => boolean,
+  timeoutMs = 6000,
+  stepMs = 100
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (!isDone()) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, stepMs));
+  }
+  return true;
 }
 
 export const Iap: IapService = new StoreKitIapService();
@@ -252,5 +277,17 @@ export const Iap: IapService = new StoreKitIapService();
  * the same as not owning.
  */
 export function applyEntitlement(storeSays: boolean | null): void {
-  if (storeSays === true) Progress.setAdsRemoved(true);
+  if (storeSays !== true) return;
+  Progress.setAdsRemoved(true);
+  /*
+   * The ad layer has to be told here, not by the caller.
+   *
+   * `Ads.setAdsRemoved` used to be called only from BootScene and by hand at
+   * two MenuScene sites, so the grant that runs inside the approved handler —
+   * the one an actual purchase goes through — never reached it at all: banners
+   * and interstitials kept coming for the rest of the session after the player
+   * had paid to stop them. Making this the single choke point means a third
+   * caller cannot forget.
+   */
+  Ads.setAdsRemoved(true);
 }

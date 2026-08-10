@@ -325,7 +325,7 @@ export class InkRenderer {
     this.scene.tweens.add({
       targets: layer,
       scale: 1,
-      delay: METRICS.winHoldMs,
+      delay: ms(METRICS.winHoldMs),
       duration: ms(METRICS.winSettleMs),
       ease: 'Cubic.easeOut',
     });

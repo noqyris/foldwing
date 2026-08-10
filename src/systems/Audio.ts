@@ -19,9 +19,25 @@
 const PENTATONIC = [0, 2, 4, 7, 9];
 const ROOT_HZ = 261.63; // C4
 
-function semitone(step: number): number {
-  const octave = Math.floor(step / PENTATONIC.length);
-  const degree = PENTATONIC[step % PENTATONIC.length];
+/**
+ * How many octaves the phrase climbs before starting again.
+ *
+ * It used to climb without a ceiling, and the level set does not cooperate:
+ * measured over the shipped 295, a level has a median of 21 obstacle rows and
+ * as many as 33. Step 20 is 4186 Hz — with the "shine" partial an octave above
+ * it, 8372 Hz — and step 32 asks the oscillator for about 21 kHz. So the reward
+ * for finally clearing a hard level was the most piercing sound in the game,
+ * and the top of the ladder was inaudible on a phone speaker anyway.
+ *
+ * Three octaves is C4 to A6: a real climb the ear can follow, that then rolls
+ * over and climbs again rather than walking out of the register.
+ */
+const OCTAVES = 3;
+
+export function semitone(step: number): number {
+  const wrapped = step % (PENTATONIC.length * OCTAVES);
+  const octave = Math.floor(wrapped / PENTATONIC.length);
+  const degree = PENTATONIC[wrapped % PENTATONIC.length];
   return degree + octave * 12;
 }
 
