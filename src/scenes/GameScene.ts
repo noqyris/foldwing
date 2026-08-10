@@ -1002,6 +1002,16 @@ export class GameScene extends Phaser.Scene {
    */
   private showWebDailyEnd(): void {
     if (this.webDailyEnd) return;
+    /*
+     * Clear the win furniture first. The end card dims the board to 22%, which
+     * is not enough to hide anything: the "Share this fold" pill (depth 50) and
+     * the "tap to finish" hint stayed perfectly readable under a sheet at depth
+     * 90, offering a second, different share right next to the card's own.
+     */
+    this.clearShareOffer();
+    this.clearRevealOffer();
+    this.clearSkipOffer();
+    this.hideHint();
     const t = theme();
     const sheet = this.add.container(0, 0).setDepth(90);
 
@@ -1064,7 +1074,25 @@ export class GameScene extends Phaser.Scene {
         size: TYPE.label,
         onPress: () => {
           this.closeWebDailyEnd();
+          /*
+           * A fresh run, not a continuation. resetToIdle alone left `attempts`,
+           * `totalDeaths`, `mirrorDeaths` and `levelReveals` carrying the
+           * finished run's totals, so a replay's Fold Sense was scored against
+           * the previous attempt's history and the escalation ladder could open
+           * with a rescue offer on the first stroke.
+           */
+          this.attempts = 0;
+          this.totalDeaths = 0;
+          this.mirrorDeaths = 0;
+          this.levelReveals = 0;
+          this.winRatio = null;
+          this.winMedal = false;
+          this.winSense = 0;
+          this.lastAttempt = null;
+          this.ink.clearGhost();
+          Audio.resetScale();
           this.resetToIdle();
+          this.refreshHud();
         },
       })
     );

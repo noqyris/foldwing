@@ -9,10 +9,34 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="theme-color" content="#E9EBE4" />
-    <title>Foldwing</title>
+    <meta name="apple-mobile-web-app-title" content="Foldwing" />
+    <title>Foldwing — one line, mirrored</title>
+    <meta
+      name="description"
+      content="Draw one line to the goal. Its mirror has to survive too, and half the walls are only on the other side."
+    />
+    <!--
+      The web build is the Daily Fold, and the way people meet it is a link
+      pasted into a group chat. Without these the unfurl is a bare URL, which is
+      the difference between a card someone taps and a string of text nobody
+      does.
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Foldwing — one line, mirrored" />
+    <meta
+      property="og:description"
+      content="One maze a day, the same for everyone. Half of it is only visible in the mirror."
+    />
+    <meta property="og:url" content="https://www.noqyris.com/foldwing/" />
+    <meta name="twitter:card" content="summary" />
+    <!--
+      The mechanic as a 32px mark: the fold axis, a stroke, and its reflection.
+      It replaces the stock heart the scaffold shipped with, which said nothing
+      about the game and looked like somebody else's app in a tab strip.
+    -->
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23E9EBE4'/%3E%3Cpath d='M16 27C16 27 6 21 6 13a5 5 0 0 1 10-2 5 5 0 0 1 10 2c0 8-10 14-10 14z' fill='%2316323C'/%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23E9EBE4'/%3E%3Cpath d='M16 3v26' stroke='%239A9C90' stroke-width='1' stroke-dasharray='2 2'/%3E%3Cpath d='M6 26c0-6 8-5 8-10S6 12 6 6' fill='none' stroke='%2316323C' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M26 26c0-6-8-5-8-10s8-4 8-10' fill='none' stroke='%238E3B62' stroke-width='3' stroke-linecap='round' opacity='0.55'/%3E%3C/svg%3E"
     />
     <style>
       html,

@@ -294,7 +294,12 @@ export class AdsService {
       const onReward = (): void => {
         earned = true;
       };
-      await AdMob.addListener(RewardAdPluginEvents.Rewarded, onReward as (i: AdMobRewardItem) => void);
+      // Held so it can be taken off again — see `once`. A reward handler that
+      // outlives its ad is the one leak here that would not stay inert.
+      const rewardHandle = await AdMob.addListener(
+        RewardAdPluginEvents.Rewarded,
+        onReward as (i: AdMobRewardItem) => void
+      );
 
       const closed = this.once(
         [RewardAdPluginEvents.Dismissed, RewardAdPluginEvents.FailedToShow],
@@ -303,9 +308,11 @@ export class AdsService {
       try {
         await AdMob.showRewardVideoAd();
       } catch {
+        void rewardHandle.remove();
         return 'unavailable';
       }
       await closed;
+      void rewardHandle.remove();
 
       if (earned) {
         this.mutedUntil = Date.now() + monetization.ads.muteAfterRewardedSeconds * 1000;
@@ -329,15 +336,31 @@ export class AdsService {
   private once(events: string[], timeoutMs: number): Promise<string | null> {
     return new Promise<string | null>((resolve) => {
       let done = false;
+      /*
+       * Every listener is removed once the race is settled.
+       *
+       * These used to be added and never taken off, so a session accumulated
+       * two dead handles per interstitial and two per rewarded video. They were
+       * inert — each one only called `finish` on a promise that had already
+       * resolved — but the plugin still delivered every future ad event to a
+       * growing list of them, and "inert leak" is one refactor away from a
+       * handler that does something.
+       */
+      const handles: Promise<{ remove: () => Promise<void> }>[] = [];
       const finish = (event: string | null): void => {
         if (done) return;
         done = true;
         clearTimeout(timer);
+        for (const h of handles) void h.then((l) => l.remove()).catch(() => undefined);
         resolve(event);
       };
       const timer = setTimeout(() => finish(null), timeoutMs);
       for (const e of events) {
-        void AdMob.addListener(e as never, (() => finish(e)) as never);
+        handles.push(
+          AdMob.addListener(e as never, (() => finish(e)) as never) as unknown as Promise<{
+            remove: () => Promise<void>;
+          }>
+        );
       }
     });
   }
