@@ -1,7 +1,7 @@
 # Shipping Foldwing
 
 App Store Connect app id **6794804195** · bundle `com.noqyris.foldwing` · team
-`YMN45WC2QR`. The Xcode project is at **1.1, build 22** — `MARKETING_VERSION`
+`YMN45WC2QR`. The Xcode project is at **1.1, build 23** — `MARKETING_VERSION`
 and `CURRENT_PROJECT_VERSION` in `ios/App/App.xcodeproj/project.pbxproj`, which
 is the only version fact this repo can prove. What App Store Connect currently
 holds is a different question, and the ledger below is honest about not
@@ -100,9 +100,10 @@ of build 19 it is enforced rather than remembered.
 | 20 | LIVE | **2026-08-09, uploaded to TestFlight, not submitted.** First build past the guard: live AdMob ids, `NSPhotoLibraryAddUsageDescription`, `PrivacyInfo.xcprivacy`, the v1→v2 save migration, the Daily's ad-grace / decoy / fallback / medal fixes, settings, level-1 onboarding, a campaign ending, and 1228 tests green. Verified by unzipping the ipa, not by trusting the archive |
 | 21 | **TEST** | **2026-08-09, TestFlight only, NEVER SUBMIT.** Same code as 20, archived through `fastlane beta_testads` so the tester can actually SEE the ads — live units no-fill until AdMob reviews a public app. Nothing on disk changed to make it; see below |
 | 22 | **TEST** | **2026-08-10, TestFlight only, NEVER SUBMIT.** The polish pass: paper launch screen (21 and earlier opened on Capacitor's white splash with its blue logo), dark status-bar content, a Remove Ads purchase that actually applies without a relaunch, purchase/restore feedback, win-screen overlay and tap fixes, a bounded note ladder, sticky teaching lines, reduced motion everywhere. 1234 tests green |
+| 23 | **TEST** | **2026-08-10, TestFlight only, NEVER SUBMIT.** First build verified by actually PLAYING it: a harness draws the validator's proved route and asserts 45 things across the loop, the Daily, settings, the campaign end and the level grid. Fixes the AdMob listener leak, the web-daily end card showing a second share underneath itself, and its "Fold again" carrying the last run's deaths into the next score |
 
 **This ledger cannot tell you what is on TestFlight right now.** Nothing in the
-repo can: the Xcode project carries a build number (currently 22), but fastlane
+repo can: the Xcode project carries a build number (currently 23), but fastlane
 derives the real one from App Store Connect at upload time, and nobody wrote
 down what went out for 15 through 18. Rows are not invented here to fill the
 gap — an invented row is worse than a missing one, because a missing row makes
