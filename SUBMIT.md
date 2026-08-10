@@ -1,7 +1,7 @@
 # Shipping Foldwing
 
 App Store Connect app id **6794804195** · bundle `com.noqyris.foldwing` · team
-`YMN45WC2QR`. The Xcode project is at **1.1, build 23** — `MARKETING_VERSION`
+`YMN45WC2QR`. The Xcode project is at **1.1, build 24** — `MARKETING_VERSION`
 and `CURRENT_PROJECT_VERSION` in `ios/App/App.xcodeproj/project.pbxproj`, which
 is the only version fact this repo can prove. What App Store Connect currently
 holds is a different question, and the ledger below is honest about not
@@ -101,9 +101,10 @@ of build 19 it is enforced rather than remembered.
 | 21 | **TEST** | **2026-08-09, TestFlight only, NEVER SUBMIT.** Same code as 20, archived through `fastlane beta_testads` so the tester can actually SEE the ads — live units no-fill until AdMob reviews a public app. Nothing on disk changed to make it; see below |
 | 22 | **TEST** | **2026-08-10, TestFlight only, NEVER SUBMIT.** The polish pass: paper launch screen (21 and earlier opened on Capacitor's white splash with its blue logo), dark status-bar content, a Remove Ads purchase that actually applies without a relaunch, purchase/restore feedback, win-screen overlay and tap fixes, a bounded note ladder, sticky teaching lines, reduced motion everywhere. 1234 tests green |
 | 23 | **TEST** | **2026-08-10, TestFlight only, NEVER SUBMIT.** First build verified by actually PLAYING it: a harness draws the validator's proved route and asserts 45 things across the loop, the Daily, settings, the campaign end and the level grid. Fixes the AdMob listener leak, the web-daily end card showing a second share underneath itself, and its "Fold again" carrying the last run's deaths into the next score |
+| 24 | **TEST** | **2026-08-10, TestFlight, internal only, NEVER SUBMIT.** Same code as 23; uploaded to prove the distribution fix end to end. `internal=IN_BETA_TESTING`, verified by unzipping (test app id, `useTestAds` true in the bundle) |
 
 **This ledger cannot tell you what is on TestFlight right now.** Nothing in the
-repo can: the Xcode project carries a build number (currently 23), but fastlane
+repo can: the Xcode project carries a build number (currently 24), but fastlane
 derives the real one from App Store Connect at upload time, and nobody wrote
 down what went out for 15 through 18. Rows are not invented here to fill the
 gap — an invented row is worse than a missing one, because a missing row makes
@@ -120,10 +121,15 @@ without `hasAccessToAllBuilds`, and that flag is **create-only** (Apple answers
 "can not be included in a 'UPDATE' operation"), so the group only ever shows
 builds handed to it explicitly.
 
-The upload lanes now wait for processing and distribute to the `Internal` group,
-which costs a few minutes and is the difference between "the upload succeeded"
-and "I can install it". For a build already uploaded, `asc-tf-groups assign
---app com.noqyris.foldwing` hands the newest processed one over.
+Upload and distribution are two separate steps on purpose.
+`upload_to_testflight(groups:)` looks like the obvious fix and is a trap: pilot's
+distribute path calls `post_beta_app_review_submission`, so asking it to
+distribute **asks Apple to review the build**. On build 24 that fired, and the
+only reason a test-ads build was not sent to Apple is that it failed on an empty
+Beta App Description. The lane no longer asks pilot to distribute; that job goes
+to `Build#add_beta_groups`, which touches no review queue:
+
+    asc-tf-groups assign --app com.noqyris.foldwing
 
 Check `internal=IN_BETA_TESTING`, not `processing=VALID`:
 `asc-tf-groups builds --app com.noqyris.foldwing`.

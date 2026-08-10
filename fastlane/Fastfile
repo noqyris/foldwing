@@ -179,26 +179,29 @@ platform :ios do
     UI.important("The working tree is untouched and still submission-ready.")
   end
 
-  # Upload AND hand the build to the internal group.
+  # Upload, then hand the build to the internal group — as two separate steps,
+  # deliberately.
   #
-  # `skip_waiting_for_build_processing: true` returns the moment the bytes are
-  # accepted, which is fast and was the whole reason it was set — but a build
-  # that has not finished processing cannot be distributed, so nothing ever was.
-  # The internal group on this app was created without hasAccessToAllBuilds, and
-  # that flag is create-only, so the group only ever sees builds handed to it
-  # explicitly. Result: build 23 sat on App Store Connect processed and VALID
-  # while TestFlight on the phone showed nothing at all.
+  # `upload_to_testflight(groups:)` looks like the obvious way to do this and is
+  # a trap: pilot's distribute path calls post_beta_app_review_submission, so
+  # asking it to distribute ASKS APPLE TO REVIEW THE BUILD. On build 24 that
+  # fired and only failed because the Beta App Description was empty — an
+  # accident is the only reason a test-ads build was not sent to Apple.
   #
-  # Waiting costs a few minutes per upload and is the difference between "the
-  # upload succeeded" and "I can install it".
+  # `Build#add_beta_groups` is the plain distribution call and touches no review
+  # queue, so distribution runs through the account-wide tool instead:
+  #   asc-tf-groups assign --app com.noqyris.foldwing
+  #
+  # Without it the build sits at processing=VALID, internal=READY_FOR_BETA_TESTING
+  # and never reaches a phone — which is what happened to builds 19 through 23.
   def upload_and_distribute
     upload_to_testflight(
       api_key: asc_key,
-      skip_waiting_for_build_processing: false,
-      distribute_external: false,
-      groups: ["Internal"],
-      changelog: "Internal test build."
+      skip_waiting_for_build_processing: true,
+      distribute_external: false
     )
+    UI.important("Uploaded. Now run:  asc-tf-groups assign --app #{APP_ID}")
+    UI.important("Until then it is VALID but NOT installable.")
   end
 
   desc "Re-upload the ipa already in build/ without rebuilding"
