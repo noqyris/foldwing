@@ -27,7 +27,8 @@ Every module under `src/render/` — the thing that paints the play surface
 (`InkRenderer`), the palette and sizing tokens everything reads (`Theme`), the
 Phaser-primitive UI kit (`UI`), the tap-geometry correction that fixed the
 "buttons need three taps" bug (`HitArea`), the list scroller (`ScrollView`), and
-the offscreen 1080×1080 PNG exporter (`ShareCard`). It also covers the two
+the offscreen PNG exporter (`ShareCard`) and the layout it shares with the
+gallery (`FigureCard`). It also covers the two
 render-texture atlases in `LevelSelectScene` / `GalleryScene`, because those are
 rendering decisions that live in the scenes.
 
@@ -40,7 +41,8 @@ rendering decisions that live in the scenes.
 | `src/render/UI.ts` | 372 | `tappable`, `label`, `button`, `roundRect`, `softShadow`, `rule`, `wordmark`, `enter`, `FONT`/`TYPE`/`SPACE`/`RADIUS`/`TAP_SLOP`/`COLUMN` |
 | `src/render/HitArea.ts` | 67 | Pure-maths hit-rectangle correction for centre-drawn containers |
 | `src/render/ScrollView.ts` | 272 | Scene-level drag/tap discrimination, momentum, off-screen culling |
-| `src/render/ShareCard.ts` | 204 | `renderShareCard` — figure → PNG data URL on a plain 2D canvas |
+| `src/render/ShareCard.ts` | 300 | `renderShareCard` — maze + solution → PNG data URL on a plain 2D canvas |
+| `src/render/FigureCard.ts` | 160 | `layoutFigureCard` — the shared arithmetic behind the gallery card and the share card |
 | `src/render/Theme.test.ts` | 140 | Pins the spec numbers and the LOCKED hit-radius consequence |
 | `src/render/HitArea.test.ts` | 73 | Pins live-area == painted-area, and reproduces the shipped bug |
 | `src/scenes/LevelSelectScene.ts` | 308 | Level-card atlas bake, camera-viewport clip, atlas lifetime |
@@ -1120,82 +1122,121 @@ stay drawn for the whole scroll.
 ## 7. ShareCard
 
 `src/render/ShareCard.ts`. Drawn on a **plain 2D canvas**, not through Phaser's
-WebGL snapshot (`ShareCard.ts:1-19`). Three requirements a render-texture
-readback cannot reliably meet: pixel-exact output, identical on web and device,
-and available **without a live scene** (the gallery renders figures earned in an
-earlier session).
+WebGL snapshot. Three requirements a render-texture readback cannot reliably
+meet: pixel-exact output, identical on web and device, and available **without a
+live scene** (the gallery renders figures earned in an earlier session).
+
+**What is on the card:** the maze, the line that solved it, its reflection, the
+time, and a question. It used to carry the closed figure alone — a lovely mark
+and completely mute, showing neither the walls that made it hard nor that there
+had been a puzzle at all, so the only people who could read it were people who
+already played. The maze makes it legible to a stranger; the time plus
+"Can you beat me?" turns it from a picture into an invitation.
 
 ```ts
-export const CARD_SIZE = 1080;                                 // ShareCard.ts:28
+export const CARD_SIZE = 1080;
+export const CARD_MAZE_HEIGHT = 1920;   // 9:16 — see below
 
-export interface CardOptions {                                 // ShareCard.ts:30-42
+export interface CardOptions {
   readonly size?: number;
+  readonly height?: number;         // default: 9:16 with a maze, square without
   readonly transparent?: boolean;
   readonly caption?: string;        // falsy hides the whole footer
+  readonly challenge?: string;      // the rematch line
   readonly showWordmark?: boolean;
-  readonly marginScale?: number;    // default 0.12
+  readonly showMaze?: boolean;      // default: on when the figure carries one
+  readonly marginScale?: number;    // default 0.12, or 0.05 with a maze
   readonly nibScale?: number;       // multiplier on the nib
   readonly flat?: boolean;          // skip the grain — for the app icon
 }
 
-export function renderShareCard(figure: SavedFigure, opts: CardOptions = {}): string // :124
+export function renderShareCard(figure: SavedFigure, opts: CardOptions = {}): string
+export function shareCardOptions(figure: SavedFigure): CardOptions
+export function shareText(figure: SavedFigure): string
+export const CHALLENGE = 'Can you beat me?';
 ```
 
-Returns a PNG data URL, or `''` if `getContext('2d')` fails (`:132`).
+Returns a PNG data URL, or `''` if `getContext('2d')` fails.
 
-Defaults: `size = CARD_SIZE` (1080), `marginScale = 0.12`, `nibScale = 1`,
-`showWordmark` defaults **on** (the check is `opts.showWordmark !== false`, `:160`
-and `:195`).
+`shareCardOptions` and `shareText` are the app's own share, defined once and
+used by both the win-screen pill and the gallery. `shareText` repeats the time
+on purpose: a link preview or a text-only fallback strips the picture, and the
+challenge has to survive that. It ends with `APP_STORE_URL`, which is what makes
+the challenge answerable by someone who does not have the game.
 
-**Why the card, not the transparent PNG, is the default (`ShareCard.ts:16-18`):**
-a transparent PNG posted to a social app lands on whatever background that app
-uses — usually black — and the dark ink disappears into it. A shared image nobody
-can see is not a share.
+**Why 9:16 for a maze card.** The playfield is 702 × 1102 base pixels, so at a
+5% margin the maze becomes exactly width-bound at 1080 × 1920 and fills the card
+edge to edge. A square card printed it ~700px wide inside 1080 with two fat
+bands of empty paper either side. It is also the shape of a phone screenshot,
+which is what people expect a shared level to look like.
+
+**Why the card, not the transparent PNG, is the default:** a transparent PNG
+posted to a social app lands on whatever background that app uses — usually
+black — and the dark ink disappears into it. A shared image nobody can see is
+not a share. `showMaze` follows the same logic in the other direction: `flat`
+(the app icon) and `transparent` (a compositing export) both want the mark by
+itself.
 
 ### Pipeline
 
 ```text
-1. canvas = document.createElement('canvas'); size × size            :128-131
-2. background (skipped when opts.transparent)                        :134-141
+1. maze   = showMaze ?? (figure.walls?.length && !transparent && !flat)
+   height = opts.height ?? (maze ? size * 16/9 : size)
+2. canvas = document.createElement('canvas'); width × height
+3. background (skipped when opts.transparent)
      opts.flat  → flat fillRect in t.paper
      otherwise  → layPaper() (paper + grain)
-3. pf = new Playfield(BASE_WIDTH, BASE_HEIGHT, METRICS.inset)        :146
-     raw = figure.points.map(pf.toScreen)                            :147
-     stroke = renderStroke(raw, figure.times,
-                METRICS.renderMaxSpacing, METRICS.smoothIterations)  :148-153
-4. mirrored = mirrorPath(stroke.points, pf.axisX)                    :155
-   outline  = closedFigure(stroke.points, pf.axisX)                  :156
-   bounds   = boundsOf(outline);  null → return the blank canvas     :157-158
-5. layout                                                            :160-173
-     hasFooter = Boolean(caption) || showWordmark !== false
-     margin    = size * (marginScale ?? 0.12)                = 129.6 at 1080
-     footer    = hasFooter && !transparent ? size * 0.11 : 0 = 118.8 at 1080
-     boxW      = size - margin*2
-     boxH      = size - margin*2 - footer
-     scale     = min(boxW / max(bounds.w,1), boxH / max(bounds.h,1))   // UNIFORM
-     offX      = size/2 - (bounds.x + bounds.w/2) * scale
-     offY      = margin + (boxH - bounds.h*scale)/2 - bounds.y*scale
-     nibWidth  = pt(t.strokePt) * scale * (nibScale ?? 1)
-6. paint, in this order                                              :175-183
+4. margin = width * (marginScale ?? (maze ? 0.05 : 0.12))
+   footer = hasFooter && !transparent ? height * 0.11 : 0
+   layout = layoutFigureCard(figure, {margin box}, nibScale)   // FigureCard.ts
+     null → return the blank canvas
+5. maze, when drawn, back to front
+     axis    dashed, rgba(ink, axisAlpha)
+     walls   rounded rects in t.wall
+     markers reflections first, then the real start dot and goal ring
+6. figure, in this order
      fill    outline   at rgba(ink, winFillAlpha)   // silhouette first
-     ribbon  mirrored  at rgba(ink, mirrorAlpha)
+     ribbon  mirrored  at rgba(veiledInk(ink), 1)   // NOT ink at mirrorAlpha
      ribbon  stroke    at rgba(ink, 1)
-7. footer text (only when footer > 0)                                :185-201
-     baseY = size - margin * 0.72
-     caption  : round(size*0.034) px Georgia…, rgba(ink,0.46), centred,
-                at baseY - size*0.055
-     wordmark : round(size*0.042) px Georgia…, rgba(ink,0.8),  centred, at baseY
-8. return canvas.toDataURL('image/png')                              :203
+7. footer, stacked UP from the wordmark so adding a line never moves the ones
+   below it: wordmark (0.042w, ink 0.8), challenge (0.038w, ink 0.62),
+   caption (0.032w, ink 0.46)
+8. return canvas.toDataURL('image/png')
 ```
 
-**Uniform scale is deliberate (`:166-167`):** the figure's proportions *are* the
-drawing; stretching it to fill the square would make every player's figure the
-same shape.
+**The mirror is a veiled colour at full opacity, not ink at `mirrorAlpha`.** A
+ribbon overlaps itself dozens of times and a 2D canvas composites every fill
+separately, so the translucent version accumulated to very nearly the ink's own
+weight — erasing the difference between the stroke and its reflection on a card
+whose entire subject is that difference. Same reasoning, and now the same
+function (`Theme.veiledInk`), as the live renderer.
 
-**Reference-playfield reconstruction (`:143-146`) is the reason figures are
-stored normalized** (`Playfield.ts:50-56`). The saved figure is rebuilt in the
-canonical 750×1334 playfield first and only *then* fitted to the card, so the
-shape matches the game exactly regardless of which device drew it.
+**Reference-playfield reconstruction is the reason figures are stored
+normalized.** The saved figure is rebuilt in the canonical 750×1334 playfield
+first and only *then* fitted to the card, so the shape matches the game exactly
+regardless of which device drew it. That arithmetic lives in `FigureCard.ts` —
+see below — because the gallery needs the identical answer.
+
+### `FigureCard` — one layout, two painters
+
+`src/render/FigureCard.ts` has no Phaser import and paints nothing. It answers
+"where does everything go", in card pixels, for both renderers:
+
+```ts
+export function layoutFigureCard(figure: SavedFigure, box: Rect, nibScale = 1): CardLayout | null
+export function markerRadius(kind: 'start' | 'goal', scale: number): number
+export const goalRingWidth: (scale: number) => number
+```
+
+The gallery paints Phaser Graphics, the share card paints a 2D canvas, and that
+split stays — but two copies of the scale/offset/nib arithmetic drift, and the
+moment they do the card a player looks at stops being the card they send.
+
+With a maze the frame is the **playfield**, the same rectangle on every card, so
+two runs through one maze are comparable at a glance. Without one it falls back
+to fitting the figure's own bounds — all a figure saved before `SavedFigure.walls`
+existed can offer. `nib` is floored at 1.5px: at gallery-thumbnail scale the
+honest width rounds to nothing and the figure disappears from its own card.
 
 ### `layPaper` and the `putImageData` trap
 

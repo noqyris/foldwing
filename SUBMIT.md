@@ -27,7 +27,7 @@ it as the last known good state rather than as today's.
 | Categories | Games → Puzzle, Casual · secondary Entertainment |
 | Age rating | **4+** |
 | Screenshots | 4 × 6.7" (1290×2796) uploaded |
-| In-app purchases | `…removeads` (non-consumable) and `…reveals20` (consumable) |
+| In-app purchases | `…removeads` (non-consumable) plus `…reveals10` / `…reveals20` / `…reveals30` (consumable) |
 | Ad units | **LIVE** in the tree, and now guarded — see below |
 
 ### Still to do by hand — FOUR THINGS, IN THIS ORDER
@@ -43,7 +43,7 @@ has no price of any kind. A free app still needs an explicit price schedule.
 
 **2. Availability — choose territories.** `appAvailabilityV2` also returns 404.
 *Pricing and Availability → Availability → All countries.*
-(Remove Ads already has all 175; the app itself has none. Check `reveals20`
+(Remove Ads already has all 175; the app itself has none. Check each pack
 separately — territories are per product, and a product can look ready with
 none set. See the purchases section.)
 
@@ -200,13 +200,19 @@ the agvtool clobber described under "Build and upload" gets caught.
 
 ## The purchases — there are TWO now
 
-    com.noqyris.foldwing.removeads   non-consumable, $0.99, family-shareable
-    com.noqyris.foldwing.reveals20   consumable, 20 reveals
+    com.noqyris.foldwing.removeads   non-consumable, $2.99, family-shareable
+    com.noqyris.foldwing.reveals10   consumable, 10 reveals, $0.99
+    com.noqyris.foldwing.reveals20   consumable, 20 reveals, $1.49
+    com.noqyris.foldwing.reveals30   consumable, 30 reveals, $1.99
+
+    …reveals25 exists and is UNUSED — created, then superseded when the
+    ladder moved to 10/20/30. Never sold. Delete it or leave it; it is not
+    referenced by the app.
 
 Both ids live in `src/config/monetization.ts` under `monetization.products`,
 and the store surface for both is `systems/Iap.ts`.
 
-`reveals20` is newer than most of this file and is easy to forget, because
+The packs are newer than most of this file and are easy to forget, because
 Remove Ads is the one everybody remembers. Each of these has to be done for it
 as well as for Remove Ads, in App Store Connect:
 
@@ -329,7 +335,8 @@ TestFlight too.
 ## Ad placement, and where it deliberately isn't
 
 1. **Leaving a win**, after the figure, never over it. Every 3rd win.
-2. **A retry**, gated by every 5th failed attempt **and** 120s since the last
+2. **A retry**, gated by every 8th failed attempt **and** the session ladder's
+   floor since the last
    ad — both, never either. A failed attempt lasts three to eight seconds, so a
    count alone would put an ad on screen every 25 seconds on a level someone is
    stuck on. AdMob policy explicitly forbids triggering an interstitial "every

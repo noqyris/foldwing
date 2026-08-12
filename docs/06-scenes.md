@@ -38,7 +38,7 @@ Share are called relative to the visuals.
 | `src/scenes/MenuScene.ts` | 216 | Home page: Continue/Play, Levels, Gallery, IAP rows |
 | `src/scenes/LevelSelectScene.ts` | 308 | 100-card scrollable grid, baked into one atlas |
 | `src/scenes/GameScene.ts` | 707 | The core loop and the input state machine |
-| `src/scenes/GalleryScene.ts` | 249 | Every saved figure, baked into one atlas; tap to share |
+| `src/scenes/GalleryScene.ts` | 300 | Every solved maze with its solution, baked into atlases; tap to share |
 | `src/render/ScrollView.ts` | 272 | Drag/flick/tap arbitration + culling for both grids |
 | `src/render/UI.ts` | 372 | `button`, `label`, `enter`, `tappable`, `TAP_SLOP` |
 | `src/render/InkRenderer.ts` | 432 | Everything GameScene draws inside the playfield |
@@ -279,38 +279,48 @@ remove the atlas was still resident after returning to the menu.
 
 ## 5. GalleryScene
 
-`create()` (`GalleryScene.ts:41-144`). Payload: none. Same `COLS = 3` / `GAP = pt(10)`.
-Owns a `Playfield` (`:44`) purely to map stored normalized figure points back to
-pixels before refitting them into a card.
+`create()`. Payload: none. Same `COLS = 3` / `GAP = pt(10)`.
 
 - Header: back `‹` at `pt(56)`, title `Gallery`, subtitle
-  `'1 figure'` / `` `${figures.length} figures` `` at `pt(96)` (`:49-72`).
-- `figures = Progress.figures` — the getter returns **newest first**
-  (`Progress.ts:206-208`).
-- Empty state (`:76-89`): two labels, `'Nothing folded yet.'` and
+  `'1 figure'` / `` `${figures.length} figures` `` at `pt(96)`.
+- `figures = Progress.figures` — the getter returns **newest first**.
+- Empty state: two labels, `'Nothing folded yet.'` and
   `'Clear a level and its figure lands here.'`. **No grid, no second camera, no
   atlas, no ScrollView** are created in this branch.
-- Populated branch (`:90-141`): `top = pt(126)`,
-  `bottom = BASE_HEIGHT - METRICS.bannerReserve - pt(6)`, `cardH = cardW * 1.12`.
-  Same bake → cameras → `ScrollView` sequence as LevelSelect. Every row has
-  `onArm` and `onTap` (no locking).
-- `enter(this, entering, 26)` (`:143`).
+- Populated branch: `top = pt(126)`,
+  `bottom = BASE_HEIGHT - METRICS.bannerReserve - pt(6)`,
+  `cardH = cardW * CARD_ASPECT` with `CARD_ASPECT = 1.5`. Same bake → cameras →
+  `ScrollView` sequence as LevelSelect. Every row has `onArm` and `onTap` (no
+  locking).
+- `enter(this, entering, 26)`.
 
-**Why the bake exists (`:146-158`)** — a figure is a ribbon of dozens of
-`fillPoints` calls re-triangulated every frame. Measured: **one** saved figure
-took the Gallery from 16.7 ms/frame to **583 ms**; six figures ~330 ms; 33
-figures stopped it rendering at all. The save keeps up to `MAX_FIGURES = 120`
-(`Progress.ts:70`).
+**What a card shows.** The whole maze, the line that solved it, its reflection,
+and the time. Not the closed figure alone: that was a handsome grid that told
+you nothing — which maze, how hard, how the line got there — and it was
+illegible to whoever the player sent one to. Layout comes from
+`render/FigureCard.ts`, the same module the share card uses, so the card in the
+grid is the card that leaves the phone. A figure saved before mazes were kept
+carries no `walls` and falls back to the bare figure, cropped to its own ink.
 
-Atlas key `'foldwing-gallery-cards'`; identical SHUTDOWN obligation
-(`:186-189`). Card art (`:193-226`): shadow + paper + `t.ink` 0.022 wash,
-`paintFigureInto` into the box inset by `pad = pt(9)` and `pt(14)` shorter at the
-bottom, plus a `` `${(figure.ms / 1000).toFixed(1)}s` `` label.
+**Why the bake exists** — a card is a ribbon of dozens of `fillPoints` calls
+re-triangulated every frame. Measured: **one** saved figure took the Gallery
+from 16.7 ms/frame to **583 ms**; six figures ~330 ms; 33 figures stopped it
+rendering at all. The save keeps up to `MAX_FIGURES = 120`.
 
-`share(figure)` (`:228-248`): re-entrancy guarded by `this.busy`;
-`Haptics.tap()` → `renderShareCard(figure, { caption })` → `Share.shareFigure({ dataUrl, title: 'My foldwing', text, fileName: \`foldwing-${figure.levelId}-${figure.at}.png\` })`,
+Atlas keys `'foldwing-gallery-cards-<first>'`, one sheet per `ATLAS_MAX = 2048`
+square, with the same SHUTDOWN obligation. Several sheets rather than one
+because the old code bounded only the WIDTH: 120 figures baked a 2025 × 4802
+texture, past the 4096 limit of anything older than an A11, where the grid comes
+back blank. Card art: shadow + paper + `t.ink` 0.022 wash, `paintFigureInto`
+into the box inset by `pad = pt(5)` and `pt(14)` shorter at the bottom, plus a
+`` `${(figure.ms / 1000).toFixed(1)}s` `` label.
+
+`share(figure)`: re-entrancy guarded by `this.busy`; `Haptics.tap()` →
+`renderShareCard(figure, shareCardOptions(figure))` → `Share.shareFigure({ dataUrl, title: 'My foldwing', text: shareText(figure), fileName: \`foldwing-${figure.levelId}-${figure.at}.png\` })`,
 with `busy` cleared in `finally`. If `renderShareCard` returns falsy the function
-returns early (still clearing `busy`).
+returns early (still clearing `busy`). `shareCardOptions` and `shareText` live in
+`render/ShareCard.ts` and are shared with the win-screen share pill, so both
+carry the same caption and the same "Can you beat me?".
 
 ---
 
@@ -649,7 +659,7 @@ bound (100) is never actually reached; keys `1`–`9` are the practical range.
 | Boot | none | builds nothing |
 | Menu | none | `UI.button` unbinds its own scene `POINTER_UP` on container destroy (`UI.ts:292-294`) |
 | LevelSelect | `rt.destroy()` + `this.textures.remove('foldwing-level-cards')` (`:211-214`) | **Mandatory** — ~22 MB atlas; `saveTexture` gives the TextureManager its own reference, so destroying the RenderTexture alone leaks it. `ScrollView` removes its own four listeners (`ScrollView.ts:97-102`) |
-| Gallery | `rt.destroy()` + `this.textures.remove('foldwing-gallery-cards')` (`:186-189`) | same reasoning; only registered in the non-empty branch |
+| Gallery | `rt.destroy()` + `this.textures.remove(...)` per atlas sheet | same reasoning; only registered in the non-empty branch |
 | Game | `this.failTimer?.remove(); this.ink.destroy();` (`:130-133`) | `InkRenderer.destroy()` clears the win layer and destroys all five Graphics (`InkRenderer.ts:302-310`). The reveal-pill listener is unbound on its own `destroy` (`:660`) |
 
 Both atlas bakers also call `this.textures.remove(key)` **on entry** if the key

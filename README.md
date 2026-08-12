@@ -202,7 +202,7 @@ damped thud, not a buzzer — the game asks you to fail dozens of times a minute
 and an alarm would be unbearable. Nothing loops, and the context is created on
 the first real touch because iOS refuses to start audio any other way.
 
-Remove Ads ($0.99, non-consumable, family-shareable) is wired to StoreKit via
+Remove Ads ($2.99, non-consumable, family-shareable) is wired to StoreKit via
 `cordova-plugin-purchase` and was approved with 1.0. The whole store surface
 lives in `systems/Iap.ts`; nothing touches StoreKit until the player opens the
 purchase or restore flow, because a payment-queue observer at launch makes a
@@ -302,7 +302,8 @@ Four placements:
 
 1. **Leaving a win.** The player has seen their figure and tapped to move on.
    The ad fires *after* the figure, never over it. Every 3rd win.
-2. **A retry, gated hard.** Every 5th failed attempt *and* at least 120s since
+2. **A retry, gated hard.** Every 8th failed attempt *and* the session ladder's
+   floor since
    the last ad — **both**, never either. This one needs the explanation below.
 3. **The banner, always on.** `METRICS.inset.bottom` reserves its strip out of
    the playfield, so it covers paper margin and never a control. A start dot
@@ -316,11 +317,73 @@ Four placements:
    before it offers to excuse.
 
 Two purchases, both in `systems/Iap.ts`: **Remove Ads**
-(`com.noqyris.foldwing.removeads`, non-consumable) and a **20-reveal pack**
-(`com.noqyris.foldwing.reveals20`, consumable). The pack appears in one place
-only — the sheet you get when the stash is empty — and always *beside* the
-rewarded video rather than instead of it. Reveals have to stay earnable or
-watching the next ad stops being a fair deal.
+One ladder, in one place — the sheet you get when the stash is empty:
+
+    Watch an ad         +1 reveal    free
+    10 reveals          $0.99        9.90¢ each
+    20 reveals          $1.49        7.45¢ each   (−25%)
+    30 reveals          $1.99        6.63¢ each   (−33%)
+    Unlimited reveals   $2.99        and no banner, no pop-ups
+
+The free rung comes first and is the only primary button: reveals have to stay
+earnable or watching the next ad stops being a fair deal. Everything below it
+gets better value than the rung above, and the last rung is not a pack at all —
+fifty cents past the 25-pack buys reveals that never run out plus no ads, which
+makes the permanent unlock the obvious end of the row rather than something the
+player has to go and find on another screen.
+
+Two rules hold the ladder together, and both are pinned by tests.
+
+Every rung must beat the one below it on **unit price**. 25-at-$1.49 works
+alone but not with 30-at-$1.99 above it: the bigger pack would cost more per
+reveal than the smaller, and the row stops being a ladder and becomes a trap for
+whoever does not do the arithmetic. That is why the counts are 10/20/30.
+
+Every consumable must stay strictly **under** the price of unlimited. A pack
+priced the same as unlimited-plus-no-ads cannot be bought by anyone who reads
+both rows — that was the state when the 10-pack and Remove Ads both sat at
+$0.99, and it is why the top of the ladder moved to $2.99 once a $1.99 pack sat
+underneath it.
+
+The "save 25%" badges are computed from `priceMicros`, never written into the
+copy: Apple's tiers are not proportional across storefronts, so the same two
+packs genuinely save different amounts in different currencies, and a hardcoded
+percentage would be a false claim about a price in most of the world.
+
+The count lives in the product id because a StoreKit id is immutable: changing
+what a pack contains means a new product, and an id that still says 20 while the
+code grants 10 is a player charged for something other than what the button
+said.
+
+### The replay video
+
+The win screen offers two shares, because they are two different things to send.
+
+**Share the replay** builds an MP4 of the whole run — the misses, then the line
+that worked — and hands it to the system share sheet. It is not a screen
+recording. The game already stores every stroke as points and the milliseconds
+they were sampled at, which is not a record of a run, it *is* the run, so the
+clip is reconstructed instead of captured. That is better on every axis: no
+permission prompt, no HUD or banner or notch in frame, 1080×1920 whatever the
+phone's screen is, rendered faster than real time, and the same run always
+produces the same file. The failed attempts are in it on purpose — they are the
+only way a stranger learns the rule, which is that the line killing you is the
+one on the other side of the fold.
+
+Encoded with WebCodecs (`VideoEncoder` → VideoToolbox → H.264 in MP4, muxed by
+`mp4-muxer`). Safari shipped the video half of WebCodecs in 16.4, which is all a
+silent clip needs. Where it is missing the button does not appear at all rather
+than failing after the tap. Measured: ~11s of clip, 3.4 MB, under two seconds to
+encode.
+
+**Share this fold** is the still card, unchanged — a figure you made, pasted
+into a chat as an image rather than something to press play on.
+
+Both go through the OS share sheet, which is the only universal share mechanism
+there is: TikTok, Instagram, WhatsApp, Messages, Telegram, X, Discord and Save
+to Files, without a line of platform SDK. Per-platform kits only buy a deep link
+into one app's composer, at the cost of an SDK, a registered key and their
+review.
 
 ### Why the retry ad needs two gates and not one
 

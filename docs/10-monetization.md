@@ -58,16 +58,24 @@ export const monetization = {
   useTestAds: false,
 
   products: {
-    removeAds: 'com.noqyris.foldwing.removeads',
+    removeAds: 'com.noqyris.foldwing.removeads',   // $1.99, non-consumable
+    revealPacks: [                                 // the ladder, cheapest first
+      { id: 'com.noqyris.foldwing.reveals10', count: 10 },   // $0.99
+      { id: 'com.noqyris.foldwing.reveals25', count: 25 },   // $1.49
+    ],                                             // then Remove Ads at $1.99
   },
 
   ads: {
     interstitialFromLevel: 8,
     interstitialEveryNWins: 3,
-    interstitialEveryNAttempts: 5,
-    minSecondsBetweenInterstitials: 120,
-    sessionWarmupSeconds: 90,
-    maxInterstitialsPerSession: 4,
+    interstitialEveryNAttempts: 8,
+    // The session ladder — see §5.1.
+    sessionWarmupSeconds: 180,
+    minSecondsBetweenInterstitials: 180,
+    longSessionAfterSeconds: 600,
+    lateSecondsBetweenInterstitials: 120,
+    maxInterstitialsPerSession: 8,
+    newSessionAfterAwaySeconds: 1800,
     muteAfterRewardedSeconds: 300,
   },
 
@@ -91,10 +99,13 @@ export const monetization = {
 | `products.removeAds` | 109 | `'com.noqyris.foldwing.removeads'` | `Iap.ts:44` | Non-consumable product id. Also the App Store Connect IAP id. |
 | `ads.interstitialFromLevel` | 117 | `8` | `Ads.timingAllows` (`Ads.ts:162`) | Compared against the **0-based** `levelIndex`. Level index 8 is displayed as "9." (`GameScene.ts:666`). No interstitial on the first eight levels. |
 | `ads.interstitialEveryNWins` | 119 | `3` | `Ads.wouldShowInterstitial` (`Ads.ts:178`) | Post-win path only. Compared against `Progress.data.winsSinceAd`. |
-| `ads.interstitialEveryNAttempts` | 133 | `5` | `Ads.wouldShowOnAttempt` (`Ads.ts:196`) | HALF a gate. Compared against `Progress.data.attemptsSinceAd`. Useless alone — see §5.2. |
-| `ads.minSecondsBetweenInterstitials` | 139 | `120` | `Ads.timingAllows` (`Ads.ts:168`) | The brake. Hard floor since `lastInterstitialAt`, applied to BOTH interstitial entry points. |
-| `ads.sessionWarmupSeconds` | 142 | `90` | `Ads.timingAllows` (`Ads.ts:166`) | Measured from `sessionStartedAt`, which is re-stamped at the END of a successful `init()` (`Ads.ts:102`), not at process start. |
-| `ads.maxInterstitialsPerSession` | 145 | `4` | `Ads.timingAllows` (`Ads.ts:163`) | Counter only increments when an ad actually rendered (`Ads.ts:233`). |
+| `ads.interstitialEveryNAttempts` | — | `8` | `Ads.wouldShowOnAttempt` | HALF a gate. Compared against `Progress.data.attemptsSinceAd`. Useless alone — see §5.2. Sits BEYOND the rescue ladder (skip fires at 6) so the rewarded offer, worth ~3× an interstitial, wins the difficulty spike. |
+| `ads.sessionWarmupSeconds` | — | `180` | `Ads.timingAllows` | Rewarded only while the session is this young. Measured from `sessionStartedAt`, re-stamped at the END of a successful `init()`, not at process start. |
+| `ads.minSecondsBetweenInterstitials` | — | `180` | `Ads.gapSeconds` | The early floor since `lastInterstitialAt`, applied to BOTH entry points. |
+| `ads.longSessionAfterSeconds` | — | `600` | `Ads.gapSeconds` | Past this point in a session the floor drops to the value below. |
+| `ads.lateSecondsBetweenInterstitials` | — | `120` | `Ads.gapSeconds` | The late floor. Must never exceed the early one — pinned by a test. |
+| `ads.maxInterstitialsPerSession` | — | `8` | `Ads.timingAllows` | A backstop, not the pacing mechanism. Counter only increments when an ad actually rendered. |
+| `ads.newSessionAfterAwaySeconds` | — | `1800` | `Ads.watchForNewSession` | Away longer than this and the next foreground is a NEW session: warm-up re-arms, cap resets. Bound to `visibilitychange` in the constructor. |
 | `ads.muteAfterRewardedSeconds` | 147 | `300` | `Ads.showRewarded` (`Ads.ts:274`) | Sets `mutedUntil = Date.now() + 300_000` — only when `earned` is true. |
 | `reveals.grantedPerRewarded` | 156 | `1` | `GameScene.doReveal` (`GameScene.ts:433`) | Banked via `Progress.grantReveals`, never auto-spent. |
 | `reveals.freeDailyTopUp` | 157 | `1` | `Progress.applyDailyTopUp` (`Progress.ts:249`) | Applied inside `Progress.load()` only. |
@@ -209,7 +220,9 @@ Other pins in the same file:
 | `reports itself configured` | 34 | `adsConfigured() === true` — fails if `LIVE_IOS` is emptied |
 | `declares ATT and the SKAdNetwork list the SDK needs` | 57 | `NSUserTrackingUsageDescription.length > 20`, plist contains `SKAdNetworkItems` and `cstr6suwn9.skadnetwork` |
 | `protects onboarding` | 69 | `interstitialFromLevel >= 6` |
-| `keeps interstitials rare, spaced and capped` | 73 | `everyNWins >= 3`, `minSeconds >= 120`, `maxPerSession <= 4`, `warmup >= 60` |
+| `keeps interstitials rare and spaced` | — | `everyNWins >= 3`, both floors `>= 120`, `warmup >= 120` |
+| `gets no stricter with time, only more permissive` | — | `lateSeconds <= minSeconds`, `longSessionAfter > warmup` |
+| `caps above what the time floors alone would allow` | — | the cap is a backstop, not the pacing mechanism |
 | `cannot fire on retries faster than the time floor allows` | 90 | see §5.2 |
 | `stops taxing someone who just watched a rewarded ad` | 102 | `muteAfterRewardedSeconds >= 180` |
 | `only offers a skip once the level has really resisted` | 106 | `offerSkipAfterAttempts >= 5` |
@@ -317,16 +330,45 @@ private timingAllows(levelIndex: number): boolean {
   if (this.interstitialsThisSession >= a.maxInterstitialsPerSession) return false;
 
   const now = Date.now();
-  if ((now - this.sessionStartedAt) / 1000 < a.sessionWarmupSeconds) return false;
+  const sessionSeconds = (now - this.sessionStartedAt) / 1000;
+  if (sessionSeconds < a.sessionWarmupSeconds) return false;
   if (now < this.mutedUntil) return false;
-  return (now - this.lastInterstitialAt) / 1000 >= a.minSecondsBetweenInterstitials;
+  return (now - this.lastInterstitialAt) / 1000 >= this.gapSeconds(sessionSeconds);
 }
 ```
-`src/systems/Ads.ts:158`
 
 It is split out from the count checks precisely so both entry points share exactly one
 definition of "is an interruption allowed at all right now" — a third entry point added
-later cannot accidentally skip it (`Ads.ts:149-157`).
+later cannot accidentally skip it.
+
+**THE SESSION LADDER.** `gapSeconds` is not a constant, and the reason is that one
+interval cannot serve both ends of a session:
+
+| Where in the session | Interstitials |
+|---|---|
+| first 3 minutes | none at all — rewarded still works |
+| 3 to 10 minutes | at most one every 3 minutes |
+| past 10 minutes | at most one every 2 minutes |
+| any point | at most 8, and never over a live rewarded offer |
+| away ≥ 30 min | next foreground starts the ladder over |
+
+The model this replaced was a flat 90s warm-up, a flat 120s floor and a cap of four.
+That shape front-loaded every ad it would ever show into the first ten minutes and then
+went silent for the rest of the session — heaviest exactly where first-session churn
+happens, and nothing at all from the players least likely to leave. It is also what
+"the ads between levels feel too frequent" described.
+
+Two measured findings drive it. Interstitial frequency is the strongest correlate of
+first-session churn in casual puzzle — showing one per level costs 15–25% of players
+inside the first session — while rewarded video at a difficulty spike *lifts* retention,
+because the player reaches for a free continue instead of quitting. So the opening of a
+session sells only the format that helps, and the interstitial waits until someone has
+decided to stay.
+
+`newSessionAfterAwaySeconds` exists because "session" used to mean the lifetime of the
+process: a phone that sat in a pocket all afternoon came back with the cap already
+spent and showed nothing until it was force-quit, while someone who glanced at a
+message lost their warm-up grace.
 
 ### 5.1 Post-win interstitial — every 3rd win, AFTER the figure
 
@@ -382,7 +424,7 @@ wouldShowOnAttempt(levelIndex: number, attemptsSinceAd: number): boolean {
 `src/systems/Ads.ts:193`
 
 **The count is a permission; the clock is the brake.** A failed attempt in Foldwing lasts
-three to eight seconds. `interstitialEveryNAttempts: 5` on its own would put an ad on
+three to eight seconds. `interstitialEveryNAttempts` on its own would put an ad on
 screen roughly every 25 seconds on a level someone is stuck on. AdMob policy explicitly
 forbids triggering an interstitial "every time a user clicks within the app" and disables
 ad serving over it. So this configuration does not trade retention for revenue — it
