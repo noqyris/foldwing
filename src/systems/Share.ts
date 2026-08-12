@@ -33,6 +33,30 @@ export interface ShareRequest {
   readonly fileName: string;
 }
 
+export interface VideoShareRequest {
+  readonly blob: Blob;
+  readonly title: string;
+  readonly text: string;
+  readonly fileName: string;
+}
+
+/**
+ * A Blob as base64, in chunks.
+ *
+ * The native bridge takes base64, not bytes, and the obvious
+ * `String.fromCharCode(...bytes)` blows the argument limit and throws on
+ * anything above a few hundred kilobytes — which every video is.
+ */
+async function blobToBase64(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
 class ShareService {
   get available(): boolean {
     return (
@@ -46,6 +70,61 @@ class ShareService {
   async shareFigure(req: ShareRequest): Promise<boolean> {
     if (isNative()) return this.shareNative(req);
     return this.shareWeb(req);
+  }
+
+  /**
+   * Send an MP4 to the share sheet.
+   *
+   * The same path the image takes, and deliberately so: the OS sheet is the
+   * only universal share mechanism there is. It reaches TikTok, Instagram,
+   * WhatsApp, Messages, Telegram, X, Discord and Save to Files without one line
+   * of platform SDK, and every one of those composers accepts H.264 in MP4.
+   * Per-platform kits only buy a deep link into one app's composer, at the cost
+   * of an SDK, a registered key and their review — worth doing later, if the
+   * numbers ask for it, and never instead of this.
+   */
+  async shareVideo(req: VideoShareRequest): Promise<boolean> {
+    try {
+      if (isNative()) {
+        // Cache, not Documents: a derived artefact the player can regenerate
+        // has no business surviving in their file provider.
+        const written = await Filesystem.writeFile({
+          path: req.fileName,
+          data: await blobToBase64(req.blob),
+          directory: Directory.Cache,
+        });
+        await NativeShare.share({
+          title: req.title,
+          text: req.text,
+          files: [written.uri],
+          dialogTitle: req.title,
+        });
+        return true;
+      }
+
+      const file = new File([req.blob], req.fileName, { type: 'video/mp4' });
+      const nav = navigator as Navigator & {
+        canShare?: (d: ShareData) => boolean;
+        share?: (d: ShareData) => Promise<void>;
+      };
+      if (nav.share && nav.canShare?.({ files: [file] })) {
+        await nav.share({ title: req.title, text: req.text, files: [file] });
+        return true;
+      }
+
+      // No share sheet here — save it, so the button still does something.
+      const url = URL.createObjectURL(req.blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = req.fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+      return false;
+    } catch {
+      // A cancelled share sheet throws too, and that is not an error worth
+      // showing anyone.
+      return false;
+    }
   }
 
   /**

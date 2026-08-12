@@ -328,6 +328,77 @@ describe('bounded storage', () => {
     expect(Progress.figures.map((f) => f.levelId)).toEqual(['l2', 'l1']);
   });
 
+  /*
+   * Adding the maze to every figure grew the save, so the coordinates it was
+   * already storing were rounded to pay for it. Normalized points arrive as raw
+   * doubles and JSON.stringify writes every digit — a single point cost about
+   * forty characters — so this is where most of the file was going.
+   */
+  it('rounds stored geometry instead of writing seventeen digits of it', () => {
+    Progress.addFigure({
+      ...figure(1),
+      points: [{ x: 1 / 3, y: 2 / 3 }],
+      times: [16.666666],
+      walls: [{ x: 1 / 3, y: 1 / 7, w: 1 / 9, h: 1 / 11 }],
+      start: { x: 1 / 3, y: 1 / 3 },
+    });
+
+    const kept = Progress.data.figures[0];
+    expect(kept.points[0]).toEqual({ x: 0.3333, y: 0.6667 });
+    expect(kept.times[0]).toBe(17);
+    expect(kept.walls?.[0]).toEqual({ x: 0.3333, y: 0.1429, w: 0.1111, h: 0.0909 });
+    expect(kept.start).toEqual({ x: 0.3333, y: 0.3333 });
+
+    // Four places is 0.07 base pixels across the playfield — a thirtieth of the
+    // nib. What must not happen is the rounding being coarse enough to see.
+    expect(Math.abs(kept.points[0].x - 1 / 3)).toBeLessThan(1e-4);
+  });
+});
+
+describe('the maze kept with a figure', () => {
+  const walls = [{ x: 0.1, y: 0.2, w: 0.3, h: 0.02 }];
+
+  it('survives a save and reload, so a card can be redrawn from it', async () => {
+    const s = await readStored({
+      version: 2,
+      figures: [{ ...figure(1), walls, start: { x: 0.4, y: 0.9 }, goal: { x: 0.4, y: 0.1 } }],
+    });
+    expect(s.figures[0].walls).toEqual(walls);
+    expect(s.figures[0].start).toEqual({ x: 0.4, y: 0.9 });
+    expect(s.figures[0].goal).toEqual({ x: 0.4, y: 0.1 });
+  });
+
+  /*
+   * A figure with a broken maze is still a perfectly good figure, and it has a
+   * render path that needs no maze at all — the one every figure earned before
+   * this field existed already takes. Dropping the drawing over its background
+   * would lose the part the player actually made.
+   */
+  it('drops a malformed maze without dropping the drawing', async () => {
+    const s = await readStored({
+      version: 2,
+      figures: [
+        { ...figure(1), walls: 'no' },
+        { ...figure(2), walls: [{ x: 0.1, y: null, w: 0.3, h: 0.02 }] },
+        { ...figure(3), walls: [], start: { x: 'left', y: 0.9 } },
+        { ...figure(4), walls },
+      ],
+    });
+
+    expect(s.figures.map((f) => f.levelId)).toEqual(['l1', 'l2', 'l3', 'l4']);
+    expect(s.figures[0].walls).toBeUndefined();
+    expect(s.figures[1].walls).toBeUndefined();
+    expect(s.figures[2].walls).toBeUndefined();
+    expect(s.figures[2].start).toBeUndefined();
+    expect(s.figures[3].walls).toEqual(walls);
+  });
+
+  it('reads a figure saved before mazes were kept', async () => {
+    const s = await readStored({ version: 2, figures: [figure(7)] });
+    expect(s.figures[0].levelId).toBe('l7');
+    expect(s.figures[0].walls).toBeUndefined();
+  });
+
   it('keeps the newest 730 daily results and forgets the rest', async () => {
     const first = '2024-01-01';
     const daily: Record<string, DailyResult> = {};
@@ -387,6 +458,44 @@ describe('the free daily top-up', () => {
   });
 
   /*
+   * A `lastTopUp` in the FUTURE was a faucet.
+   *
+   * The check was "not equal to today", and a future date is never equal to
+   * today — so it paid out on every single launch, forever. Getting one there
+   * takes no cleverness: move the clock forward, open the app, move it back.
+   * It also fires on the innocent version, a phone whose wrong clock was later
+   * corrected.
+   *
+   * Reveals are the only currency in the game, so an unbounded supply of them
+   * is the whole rewarded loop switched off.
+   */
+  it('pays nothing when the stamp is in the future, however often it runs', () => {
+    Progress.update({ lastTopUp: '2099-01-01' });
+    const before = Progress.data.reveals;
+
+    // Every launch of that day — which is what the faucet was: relaunching
+    // paid out again and again because a future stamp is never "today".
+    Progress.applyDailyTopUp(morning);
+    Progress.applyDailyTopUp(new Date(2026, 4, 17, 13, 20));
+    Progress.applyDailyTopUp(new Date(2026, 4, 17, 21, 45));
+
+    expect(Progress.data.reveals).toBe(before);
+  });
+
+  it('repairs a future stamp rather than leaving it to misfire tomorrow', () => {
+    Progress.update({ lastTopUp: '2099-01-01' });
+    const before = Progress.data.reveals;
+
+    Progress.applyDailyTopUp(morning);
+    expect(Progress.data.lastTopUp).toBe('2026-05-17');
+    expect(Progress.data.reveals).toBe(before);
+
+    // And the ordinary schedule resumes from there.
+    Progress.applyDailyTopUp(new Date(2026, 4, 18, 9, 0));
+    expect(Progress.data.reveals).toBe(before + grant);
+  });
+
+  /*
    * This ran on UTC while the Daily Fold rolled over locally, so west of
    * Greenwich the pill's own promise — "one more lands tomorrow" — named a
    * different day than the fold it was offered alongside.
@@ -418,9 +527,9 @@ describe('the reveal economy', () => {
   });
 
   it('adds granted reveals to the stash', () => {
-    Progress.grantReveals(monetization.products.revealPackCount);
+    Progress.grantReveals(monetization.products.revealPacks[0].count);
     expect(Progress.reveals).toBe(
-      monetization.reveals.startingStash + monetization.products.revealPackCount
+      monetization.reveals.startingStash + monetization.products.revealPacks[0].count
     );
   });
 

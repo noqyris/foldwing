@@ -14,6 +14,7 @@
 import { Preferences } from '@capacitor/preferences';
 import { monetization } from '../config/monetization';
 import { ISO_DATE, shiftISO, todayISO } from '../core/CalendarDay';
+import type { Rect, Vec2 } from '../core/Geometry';
 
 const KEY = 'foldwing.save.v1';
 
@@ -51,6 +52,26 @@ export interface SavedFigure {
   readonly times: readonly number[];
   readonly ms: number;
   readonly at: number;
+  /**
+   * The maze the line was drawn through — normalized, full playfield, exactly
+   * as `Level.walls` are authored. Carried WITH the figure rather than looked
+   * up from `levelId` for two reasons, and each on its own would be enough.
+   *
+   * The daily fold is not in LEVELS at all: its geometry only exists as the
+   * output of a generator that runs a validated candidate search, so drawing
+   * yesterday's maze would mean re-running that search once per gallery card.
+   * And ids are not stable across content: the v1 → v2 migration already made
+   * `l6…l100` name completely different mazes, so a figure that outlived its
+   * level would be drawn inside the wrong walls — a picture that is confidently
+   * false is worse than one that is missing.
+   *
+   * Optional because figures earned before the gallery drew mazes have none;
+   * those still render as the bare figure they always were.
+   */
+  readonly walls?: readonly Rect[];
+  /** Normalized, x < 0.5. Absent on figures saved before mazes were kept. */
+  readonly start?: Vec2;
+  readonly goal?: Vec2;
 }
 
 /**
@@ -111,6 +132,15 @@ export interface SaveData {
    * travel. Seeded from the OS setting on a fresh save.
    */
   reducedMotion: boolean;
+  /**
+   * What this build's webview can encode, stamped at boot.
+   *
+   * Diagnostic, not state: the replay button hides itself when the encoder is
+   * missing, and from the outside that is indistinguishable from being on an
+   * older build. Settings shows this so a tester can read the answer off the
+   * screen instead of us inferring it from a screenshot.
+   */
+  capability: string;
 }
 
 /**
@@ -121,6 +151,42 @@ export interface SaveData {
  * since the whole blob is parsed at boot. Old figures fall off the back.
  */
 const MAX_FIGURES = 120;
+
+/**
+ * Decimal places kept for stored geometry.
+ *
+ * Normalized coordinates arrive as raw IEEE doubles, and `JSON.stringify`
+ * writes every digit of them: a single point cost about forty characters as
+ * `{"x":0.34188034188034189,"y":0.71751412429378536}`. Multiply by the few
+ * hundred samples in a stroke and the hundred and twenty figures this file
+ * keeps, and the save is megabytes of precision nobody can see — parsed in full
+ * at every launch.
+ *
+ * Four places is 0.07 base pixels across the playfield, roughly a thirtieth of
+ * the nib's width, and cuts the stored figure by about half. Nothing reads
+ * these numbers except the code that redraws them; collision runs on live
+ * pixels and never touches a saved figure.
+ */
+const PRECISION = 1e4;
+
+const q = (n: number): number => Math.round(n * PRECISION) / PRECISION;
+const qPoint = (p: Vec2): Vec2 => ({ x: q(p.x), y: q(p.y) });
+const qRect = (r: Rect): Rect => ({ x: q(r.x), y: q(r.y), w: q(r.w), h: q(r.h) });
+
+/** Shrink a figure to what actually has to survive a relaunch. */
+function compact(f: SavedFigure): SavedFigure {
+  return {
+    ...f,
+    points: f.points.map(qPoint),
+    // Sample timestamps are sub-millisecond floats off the same clock. The
+    // ribbon widens with the GAP between them, and no gap that matters is
+    // shorter than a millisecond.
+    times: f.times.map((t) => Math.round(t)),
+    walls: f.walls?.map(qRect),
+    start: f.start && qPoint(f.start),
+    goal: f.goal && qPoint(f.goal),
+  };
+}
 
 /**
  * How many finished Daily Folds to keep, for the same reason as MAX_FIGURES and
@@ -154,6 +220,7 @@ function freshSave(): SaveData {
     sound: true,
     haptics: true,
     reducedMotion: prefersReducedMotion(),
+    capability: '',
   };
 }
 
@@ -186,18 +253,56 @@ function coerce(raw: unknown): SaveData {
   const count = (n: unknown, fallback: number, min = 0): number =>
     typeof n === 'number' && Number.isFinite(n) ? Math.max(min, Math.trunc(n)) : fallback;
 
+  const isPoint = (p: unknown): p is Vec2 => {
+    const v = p as Partial<Vec2> | null;
+    return (
+      typeof v === 'object' &&
+      v !== null &&
+      Number.isFinite(v.x as number) &&
+      Number.isFinite(v.y as number)
+    );
+  };
+
   /** Drop figures that cannot be drawn rather than letting one kill the scene. */
   const figures = Array.isArray(r.figures)
-    ? (r.figures as unknown[]).filter((f): f is SavedFigure => {
-        if (typeof f !== 'object' || f === null) return false;
-        const g = f as Partial<SavedFigure>;
-        return (
-          Array.isArray(g.points) &&
-          Array.isArray(g.times) &&
-          g.points.length > 0 &&
-          g.points.every((p) => typeof p?.x === 'number' && typeof p?.y === 'number')
-        );
-      })
+    ? (r.figures as unknown[])
+        .filter((f): f is SavedFigure => {
+          if (typeof f !== 'object' || f === null) return false;
+          const g = f as Partial<SavedFigure>;
+          return (
+            Array.isArray(g.points) &&
+            Array.isArray(g.times) &&
+            g.points.length > 0 &&
+            g.points.every(isPoint)
+          );
+        })
+        /*
+         * The maze is dropped independently of the figure it came with.
+         *
+         * A figure whose walls are malformed is still a perfectly good figure,
+         * and it has a render path that needs no maze at all — the one every
+         * figure saved before this field existed already takes. Throwing the
+         * drawing away over its background would lose the part the player
+         * actually made.
+         */
+        .map((f) => {
+          const walls = Array.isArray(f.walls)
+            ? f.walls.filter(
+                (w): w is Rect =>
+                  typeof w === 'object' &&
+                  w !== null &&
+                  ['x', 'y', 'w', 'h'].every((k) =>
+                    Number.isFinite((w as unknown as Record<string, unknown>)[k] as number)
+                  )
+              )
+            : undefined;
+          return {
+            ...f,
+            walls: walls && walls.length > 0 ? walls : undefined,
+            start: isPoint(f.start) ? f.start : undefined,
+            goal: isPoint(f.goal) ? f.goal : undefined,
+          };
+        })
     : base.figures;
 
   /** Keep only well-formed daily entries under sane ISO-date keys. */
@@ -291,6 +396,7 @@ function coerce(raw: unknown): SaveData {
     sound: r.sound !== false,
     haptics: r.haptics !== false,
     reducedMotion: typeof r.reducedMotion === 'boolean' ? r.reducedMotion : base.reducedMotion,
+    capability: typeof r.capability === 'string' ? r.capability : '',
   };
 }
 
@@ -356,7 +462,7 @@ class ProgressStore {
    * faster one would throw away the only thing here worth showing anyone.
    */
   addFigure(figure: SavedFigure): void {
-    const figures = [...this.state.figures, figure];
+    const figures = [...this.state.figures, compact(figure)];
     this.update({
       figures: figures.length > MAX_FIGURES ? figures.slice(-MAX_FIGURES) : figures,
     });
@@ -469,6 +575,25 @@ class ProgressStore {
   applyDailyTopUp(now: Date = new Date()): void {
     const today = todayISO(now);
     if (this.state.lastTopUp === today) return;
+
+    /*
+     * STRICTLY BEFORE today, not merely "different from" today.
+     *
+     * The inequality version was a faucet. A `lastTopUp` in the FUTURE is never
+     * equal to today, so it granted a reveal on every single launch, forever —
+     * and getting one there takes no cleverness: set the clock forward, open
+     * the app, set it back. It also fires on the honest version of that, a
+     * phone whose clock was wrong and got corrected, and on any save a devtools
+     * console has been near.
+     *
+     * A future date is repaired rather than rewarded: stamp it back to today
+     * and hand out nothing, so tomorrow resumes the ordinary schedule.
+     */
+    if (this.state.lastTopUp > today) {
+      this.update({ lastTopUp: today });
+      return;
+    }
+
     this.update({
       lastTopUp: today,
       reveals: this.state.reveals + monetization.reveals.freeDailyTopUp,

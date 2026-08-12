@@ -20,7 +20,9 @@ import {
 } from '../core/StrokeRecorder';
 import { buildRibbon, DEFAULT_RIBBON, type RibbonOptions } from '../core/Ribbon';
 import type { Playfield } from '../core/Playfield';
-import { BASE_HEIGHT, BASE_WIDTH, type InkTheme, METRICS, ms, pt, theme } from './Theme';
+import type { SavedFigure } from '../systems/Progress';
+import { goalRingWidth, layoutFigureCard, markerRadius } from './FigureCard';
+import { BASE_HEIGHT, BASE_WIDTH, METRICS, ms, pt, theme, veiledInk } from './Theme';
 
 const DEPTH = {
   level: 10,
@@ -46,7 +48,7 @@ function nib(): RibbonOptions {
  *
  * Always at full opacity. Neighbouring quads overlap, and at reduced alpha each
  * overlap would darken where it met the next, so the stroke would look beaded.
- * The mirror is lightened by pre-blending its COLOUR instead — see `veil`.
+ * The mirror is lightened by pre-blending its COLOUR instead — see `veiledInk`.
  */
 function paintRibbon(
   g: Phaser.GameObjects.Graphics,
@@ -65,32 +67,6 @@ function paintRibbon(
 
 function mirrorStroke(stroke: DrawnStroke, axisX: number): DrawnStroke {
   return { points: mirrorPath(stroke.points, axisX), times: stroke.times };
-}
-
-/**
- * The mirror's colour, pre-blended toward the paper.
- *
- * The obvious way to make the reflection quieter is to draw the same ink at
- * `mirrorAlpha` and let the compositor do it. That does not work here, and the
- * reason is worth keeping: a ribbon is not one shape, it is dozens of
- * OVERLAPPING quads and discs, and Phaser applies a Graphics object's alpha per
- * draw command rather than to the finished result. Every overlap composites on
- * top of the last, so 0.45 accumulated to a measured 0.95-0.97 — the reflection
- * rendered as solid as the player's own line, which is exactly the distinction
- * the game is built on.
- *
- * Blending the colour toward the paper instead gives the intended weight in one
- * opaque pass, immune to how many times the ribbon crosses itself, and costs
- * nothing.
- */
-function veil(ink: number, t: InkTheme): number {
-  const paper = t.paper;
-  const mix = (shift: number): number => {
-    const a = (ink >> shift) & 0xff;
-    const b = (paper >> shift) & 0xff;
-    return Math.round(b + (a - b) * t.mirrorAlpha) & 0xff;
-  };
-  return (mix(16) << 16) | (mix(8) << 8) | mix(0);
 }
 
 export class InkRenderer {
@@ -187,7 +163,7 @@ export class InkRenderer {
     const ink = color ?? t.ink;
     const opts = nib();
 
-    paintRibbon(this.mirrorG, mirrorStroke(stroke, this.pf.axisX), veil(ink, t), opts);
+    paintRibbon(this.mirrorG, mirrorStroke(stroke, this.pf.axisX), veiledInk(ink, t), opts);
     paintRibbon(this.strokeG, stroke, ink, opts);
   }
 
@@ -390,7 +366,7 @@ export function buildFigure(
   // Same reason as the live stroke: a ribbon overlaps itself, so object alpha
   // accumulates. The reflection's weight lives in its colour.
   const mirrorG = scene.add.graphics();
-  paintRibbon(mirrorG, mirrored, veil(t.ink, t), ribbonOpts);
+  paintRibbon(mirrorG, mirrored, veiledInk(t.ink, t), ribbonOpts);
 
   const inkG = scene.add.graphics();
   paintRibbon(inkG, local, t.ink, ribbonOpts);
@@ -399,53 +375,65 @@ export function buildFigure(
 }
 
 /**
- * Paint a saved figure into an arbitrary box — the gallery thumbnail.
+ * Paint a saved run — the maze, the line that solved it, its reflection —
+ * into an arbitrary box. The gallery thumbnail.
  *
- * Vector, not a cached bitmap: a grid of figures redrawn as Graphics costs a
- * few hundred fills and stays crisp at any size, where pre-rendering a hundred
- * canvases would stall the scene on open and blur on a bigger screen.
+ * The same layout the share card uses, so what a player looks at in the grid is
+ * exactly what leaves the phone when they tap it. Figures saved before mazes
+ * were kept carry no walls and simply paint as the bare figure they always
+ * were; `layoutFigureCard` decides that, not this function.
  */
 export function paintFigureInto(
   g: Phaser.GameObjects.Graphics,
-  raw: readonly Vec2[],
-  times: readonly number[],
-  axisX: number,
+  figure: SavedFigure,
   box: Rect,
   alphaScale = 1
 ): void {
   const t = theme();
-  const stroke = drawnPath(raw, times);
-  const outline = closedFigure(stroke.points, axisX);
-  const bounds = boundsOf(outline);
-  if (!bounds || bounds.w <= 0 || bounds.h <= 0) return;
+  const layout = layoutFigureCard(figure, box);
+  if (!layout) return;
 
-  const scale = Math.min(box.w / bounds.w, box.h / bounds.h);
-  const offX = box.x + box.w / 2 - (bounds.x + bounds.w / 2) * scale;
-  const offY = box.y + box.h / 2 - (bounds.y + bounds.h / 2) * scale;
-  const place = (p: Vec2): Vec2 => ({ x: p.x * scale + offX, y: p.y * scale + offY });
+  if (layout.axis) {
+    const { x, top, bottom } = layout.axis;
+    const step = layout.axisDash + layout.axisGap;
+    const w = Math.max(1, layout.scale * METRICS.axisWidth);
+    g.fillStyle(t.ink, t.axisAlpha * alphaScale);
+    for (let y = top; y < bottom; y += step) {
+      g.fillRect(x - w / 2, y, w, Math.min(layout.axisDash, bottom - y));
+    }
+  }
 
-  const opts: RibbonOptions = {
-    ...DEFAULT_RIBBON,
-    baseWidth: Math.max(1.5, pt(t.strokePt) * scale),
-  };
+  if (layout.walls.length > 0) {
+    g.fillStyle(t.wall, alphaScale);
+    for (const wall of layout.walls) {
+      const r = Math.min(layout.wallRadius, wall.w / 2, wall.h / 2);
+      g.fillRoundedRect(wall.x, wall.y, wall.w, wall.h, r);
+    }
+  }
+
+  for (const m of layout.markers) {
+    const r = markerRadius(m.kind, layout.scale);
+    g.fillStyle(t.accent, m.alpha * alphaScale);
+    if (m.kind === 'start') {
+      g.fillCircle(m.p.x, m.p.y, r);
+    } else {
+      // A ring this small draws as an annulus rather than a stroked circle:
+      // lineStyle widths below a pixel drop out entirely at thumbnail scale.
+      g.fillCircle(m.p.x, m.p.y, r);
+      g.fillStyle(t.paper, alphaScale);
+      g.fillCircle(m.p.x, m.p.y, Math.max(0, r - goalRingWidth(layout.scale)));
+      g.fillStyle(t.accent, m.alpha * 0.55 * alphaScale);
+      g.fillCircle(m.p.x, m.p.y, Math.max(1, r * 0.17));
+    }
+  }
+
+  const opts: RibbonOptions = { ...DEFAULT_RIBBON, baseWidth: layout.nib };
 
   g.fillStyle(t.ink, t.winFillAlpha * alphaScale);
-  g.fillPoints(outline.map(place), true);
+  g.fillPoints([...layout.outline], true);
 
-  paintRibbonAlpha(
-    g,
-    { points: mirrorPath(stroke.points, axisX).map(place), times: stroke.times },
-    veil(t.ink, t),
-    alphaScale,
-    opts
-  );
-  paintRibbonAlpha(
-    g,
-    { points: stroke.points.map(place), times: stroke.times },
-    t.ink,
-    alphaScale,
-    opts
-  );
+  paintRibbonAlpha(g, layout.mirrored, veiledInk(t.ink, t), alphaScale, opts);
+  paintRibbonAlpha(g, layout.stroke, t.ink, alphaScale, opts);
 }
 
 /**

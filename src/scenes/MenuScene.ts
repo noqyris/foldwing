@@ -15,6 +15,7 @@ import { todayISO } from '../systems/Daily';
 import { Haptics } from '../systems/Haptics';
 import { applyEntitlement, Iap } from '../systems/Iap';
 import { Progress, type SaveData } from '../systems/Progress';
+import { Rate } from '../systems/Rate';
 import { BASE_HEIGHT, BASE_WIDTH, METRICS, ms, pt, setMotionScale, theme } from '../render/Theme';
 import {
   button,
@@ -35,7 +36,11 @@ export class MenuScene extends Phaser.Scene {
   private settingsSheet: Phaser.GameObjects.Container | null = null;
   /** A store round-trip is in flight; a second tap must not place a second order. */
   private busy = false;
-  private flashText: Phaser.GameObjects.Text | null = null;
+  /** The tagline, which doubles as the menu's one status line — see `flash`. */
+  private tagline: Phaser.GameObjects.Text | null = null;
+  private taglineText = '';
+  private taglineAlpha = 0.42;
+  private flashTimer: Phaser.Time.TimerEvent | null = null;
 
   constructor() {
     super('Menu');
@@ -75,17 +80,18 @@ export class MenuScene extends Phaser.Scene {
     const finished = this.registry.get('campaignComplete') === true;
     if (finished) this.registry.remove('campaignComplete');
 
-    const tagline = label(
-      this,
-      cx,
-      pt(295),
-      finished ? 'all 300 folded. the daily is still yours.' : 'one line. two answers.',
-      {
-        size: TYPE.body,
-        alpha: finished ? 0.62 : 0.42,
-        font: FONT.display,
-      }
-    ).setOrigin(0.5, 0);
+    // Held on the scene so `flash` can borrow the slot and put it back.
+    this.taglineText = finished
+      ? 'all 300 folded. the daily is still yours.'
+      : 'one line. two answers.';
+    this.taglineAlpha = finished ? 0.62 : 0.42;
+
+    const tagline = label(this, cx, pt(295), this.taglineText, {
+      size: TYPE.body,
+      alpha: this.taglineAlpha,
+      font: FONT.display,
+    }).setOrigin(0.5, 0);
+    this.tagline = tagline;
 
     /*
      * Lay the actions out as a stack from a fixed top, rather than hand-placing
@@ -204,7 +210,20 @@ export class MenuScene extends Phaser.Scene {
       const product = Iap.removeAdsProduct();
       const price = product?.priceString ? ` · ${product.priceString}` : '';
       entering.push(
-        button(this, cx, place(pt(40)), `Remove ads${price}`, {
+        /*
+         * The menu says what the purchase GIVES, not only what it removes.
+         *
+         * "Remove ads · $2.99" on its own left the unlimited reveals — half of
+         * what is being sold, and the half the out-of-reveals sheet is about —
+         * invisible from the one screen a player browses. Measured at 494px in
+         * a 638px column, so it fits on the line rather than needing a second
+         * one the stack has no room for.
+         *
+         * The name stays "Remove ads" in both places and in App Store Connect:
+         * one product under two names at one price reads as two products, and
+         * the player would find out which at the system payment dialog.
+         */
+        button(this, cx, place(pt(40)), `Remove ads · unlimited reveals${price}`, {
           width: COLUMN,
           variant: 'secondary',
           size: TYPE.body,
@@ -235,10 +254,20 @@ export class MenuScene extends Phaser.Scene {
      * before. A corner control costs the stack nothing and is where a settings
      * control is looked for anyway.
      */
+    /*
+     * pt(52), the same height as the back chevron on Levels — the two are the
+     * same slot seen on different screens, and this one sat 12pt below it.
+     * With nothing else in the row to align against, that difference reads as
+     * the control having slipped down the page, which is how it was reported.
+     *
+     * It cannot go much higher. At pt(52) the pt(44)-tall hit box starts at
+     * base y 60; on a 9:16 phone FIT leaves no letterbox at all, so the canvas
+     * top IS the screen top and the status bar is the next thing up.
+     */
     entering.push(
-      button(this, BASE_WIDTH - METRICS.inset.left - pt(30), pt(64), '•••', {
+      button(this, BASE_WIDTH - METRICS.inset.left - pt(30), pt(52), '•••', {
         width: pt(52),
-        height: pt(40),
+        height: pt(44),
         variant: 'ghost',
         size: TYPE.body,
         onPress: () => this.openSettings(),
@@ -269,7 +298,8 @@ export class MenuScene extends Phaser.Scene {
     const cx = BASE_WIDTH / 2;
     const w = COLUMN;
     const rowH = pt(46);
-    const h = pt(58) + rowH * 3 + pt(16);
+    // Three toggles, then the rating row, then the capability line.
+    const h = pt(58) + rowH * 4 + pt(30);
 
     const sheet = this.add.container(cx, BASE_HEIGHT / 2).setDepth(60);
     this.settingsSheet = sheet;
@@ -292,6 +322,25 @@ export class MenuScene extends Phaser.Scene {
       }).setOrigin(0.5)
     );
 
+    /*
+     * What this device can encode, at the foot of the sheet.
+     *
+     * v/a/m are VideoEncoder, AudioEncoder, MediaRecorder — the three that
+     * decide whether the replay is a video with sound, a silent video, or not
+     * offered at all. It reads as noise to a player and is invisible unless
+     * they open Settings, which is the right price for never again having to
+     * infer from a screenshot whether a button is missing or a build is old.
+     */
+    const cap = Progress.data.capability;
+    if (cap) {
+      sheet.add(
+        label(this, 0, h / 2 - pt(12), `replay ${cap}`, {
+          size: TYPE.micro,
+          alpha: 0.28,
+        }).setOrigin(0.5)
+      );
+    }
+
     const rows: [string, keyof SaveData, (v: boolean) => void][] = [
       ['Sound', 'sound', (v) => Audio.setEnabled(v)],
       ['Haptics', 'haptics', (v) => Haptics.setEnabled(v)],
@@ -302,6 +351,28 @@ export class MenuScene extends Phaser.Scene {
       const y = -h / 2 + pt(58) + rowH * i + rowH / 2;
       sheet.add(this.buildToggleRow(y, w, rowH, text, key, apply));
     });
+
+    /*
+     * "Rate this game", where someone who wants to say something will look for
+     * it. Not on the menu itself: the home screen is one primary action and the
+     * things a returning player needs, and a rating ask is neither.
+     *
+     * It opens the App Store review page rather than the OS prompt — see
+     * `Rate.openStoreListing`. A deliberate tap has to do something visible,
+     * and the native prompt is throttled to a few a year and may show nothing.
+     */
+    sheet.add(
+      button(this, 0, -h / 2 + pt(58) + rowH * rows.length + rowH / 2, 'Rate this game', {
+        width: w - pt(40),
+        height: pt(38),
+        variant: 'secondary',
+        size: TYPE.label,
+        onPress: () => {
+          Haptics.tap();
+          void Rate.openStoreListing();
+        },
+      })
+    );
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.closeSettings());
   }
@@ -370,7 +441,10 @@ export class MenuScene extends Phaser.Scene {
     const reveals = unlimited ? 'unlimited reveals' : `${n} ${n === 1 ? 'reveal' : 'reveals'}`;
     const sense = Progress.data.foldSense;
     const bits = [reveals];
-    if (sense > 0) bits.push(`Fold Sense ${sense}`);
+    // Out of 100, for the same reason the win line now says so: a bare rating
+    // makes the reader guess the scale, and the two places it appears must not
+    // disagree about what the number is.
+    if (sense > 0) bits.push(`Fold Sense ${sense}/100`);
     if (figureCount > 0) bits.push(`${figureCount} folded`);
     const text = bits.join(' · ');
 
@@ -464,30 +538,44 @@ export class MenuScene extends Phaser.Scene {
   }
 
   /**
-   * A line of text that appears low on the menu and fades out.
+   * Say something, in the tagline's slot.
    *
    * The menu had no way to say anything at all, which is why the store was
-   * silent on every path that was not a clean success.
+   * silent on every path that was not a clean success. The first version of
+   * this put the line low on the screen instead — and there is no room down
+   * there. When the store is selling, the stack runs to `pt(593)` and the
+   * playfield floor is `pt(595)`: a two-pixel gap. So "the purchase didn't go
+   * through" was drawn straight across the bottom of the Remove ads button it
+   * was talking about, which is what the TestFlight screenshot showed.
+   *
+   * The tagline is the only line on this screen with guaranteed clear space
+   * around it, it is already the slot the menu speaks from (finishing all 300
+   * replaces it), and a message where the eye is already resting beats one
+   * squeezed under the fold.
    */
   private flash(message: string): void {
-    this.flashText?.destroy();
-    const t = label(this, BASE_WIDTH / 2, BASE_HEIGHT - METRICS.inset.bottom - pt(26), message, {
-      size: TYPE.label,
-      alpha: 0.75,
-      align: 'center',
-    })
-      .setOrigin(0.5)
-      .setDepth(80);
-    this.flashText = t;
-    this.tweens.add({
-      targets: t,
-      alpha: 0,
-      delay: ms(2600),
-      duration: ms(400),
-      onComplete: () => {
-        t.destroy();
-        if (this.flashText === t) this.flashText = null;
-      },
+    const line = this.tagline;
+    if (!line) return;
+
+    this.flashTimer?.remove();
+    this.tweens.killTweensOf(line);
+    line.setText(message).setAlpha(0.75);
+
+    this.flashTimer = this.time.delayedCall(ms(2600), () => {
+      this.flashTimer = null;
+      // Guard the scene, not just the object: `restore()` can restart the scene
+      // out from under a pending timer on a later tap.
+      if (!line.scene) return;
+      this.tweens.add({
+        targets: line,
+        alpha: 0,
+        duration: ms(200),
+        onComplete: () => {
+          if (!line.scene) return;
+          line.setText(this.taglineText);
+          this.tweens.add({ targets: line, alpha: this.taglineAlpha, duration: ms(260) });
+        },
+      });
     });
   }
 }

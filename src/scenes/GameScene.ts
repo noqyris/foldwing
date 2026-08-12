@@ -31,15 +31,16 @@ import {
   type Vec2,
 } from '../core/Geometry';
 import { Playfield } from '../core/Playfield';
+import { mirrorBands, obstacleRows } from '../core/Gates';
 import { foldExposure, nextProfileScore, winScore } from '../core/FoldSense';
 import { routeArc } from '../core/LevelValidator';
 import { StrokeRecorder } from '../core/StrokeRecorder';
 import { LEVELS, levelAt } from '../data/levels';
 import type { Level } from '../data/types';
-import { monetization } from '../config/monetization';
+import { monetization, packSaving } from '../config/monetization';
 import { Ads } from '../systems/Ads';
 import { dailyLevel } from '../systems/Daily';
-import { Iap } from '../systems/Iap';
+import { applyEntitlement, Iap } from '../systems/Iap';
 import { APP_STORE_URL, WEB_DAILY } from '../systems/WebDaily';
 import { Audio } from '../systems/Audio';
 import { Haptics } from '../systems/Haptics';
@@ -47,7 +48,13 @@ import { Progress } from '../systems/Progress';
 import { Rate } from '../systems/Rate';
 import { Share } from '../systems/Share';
 import { InkRenderer } from '../render/InkRenderer';
-import { renderShareCard } from '../render/ShareCard';
+import { CHALLENGE, renderShareCard, shareCardOptions, shareText } from '../render/ShareCard';
+import {
+  MAX_REPLAY_ATTEMPTS,
+  renderReplayVideo,
+  replayVideoSupported,
+  type RunAttempt,
+} from '../render/ReplayVideo';
 import { BASE_HEIGHT, BASE_WIDTH, METRICS, ms, pt, theme } from '../render/Theme';
 import {
   button,
@@ -55,6 +62,8 @@ import {
   label,
   RADIUS,
   roundRect,
+  progressCard,
+  setButtonSub,
   softShadow,
   tappable,
   TAP_SLOP,
@@ -130,6 +139,12 @@ export class GameScene extends Phaser.Scene {
   private revealCount!: Phaser.GameObjects.Text;
   private skipPill: Phaser.GameObjects.Container | null = null;
   private sharePill: Phaser.GameObjects.Container | null = null;
+  /**
+   * The band the share row occupies, kept because the row is a container of
+   * absolutely-placed pills and so reports no size of its own.
+   */
+  private shareRowRect: { left: number; right: number; top: number; bottom: number } | null =
+    null;
   private sharing = false;
   /** Set when playing the Daily Fold: the ISO date being played. */
   private dailyDate: string | null = null;
@@ -143,6 +158,17 @@ export class GameScene extends Phaser.Scene {
   private winSense = 0;
   /** The previous failed attempt, redrawn as a ghost on the next try. */
   private lastAttempt: Vec2[] | null = null;
+  /**
+   * Every attempt on this level, in order — the material the replay video is
+   * made of.
+   *
+   * Held in memory for the level being played and never saved. A run is a
+   * dozen strokes where a figure is one, and `Progress` already keeps a hundred
+   * and twenty figures in a plist that is parsed at every launch. The share
+   * that wants this is on the win screen, one tap after the last attempt, so
+   * memory is where it belongs.
+   */
+  private runAttempts: RunAttempt[] = [];
   /** A teaching line that outlives a failed or abandoned attempt. */
   private hintSticky = false;
   private revealOfferPill: Phaser.GameObjects.Container | null = null;
@@ -180,6 +206,17 @@ export class GameScene extends Phaser.Scene {
     // The banner is always on now. The playfield inset already reserves its
     // strip, so it covers paper margin rather than anything you can touch.
     void Ads.showBanner();
+
+    /*
+     * Learn the pack's price now, while nobody is waiting on it.
+     *
+     * This scene owns the only surface that sells it — the out-of-reveals
+     * sheet — and that sheet is built synchronously the instant the stash hits
+     * zero. Fetching from here rather than at launch keeps StoreKit off the
+     * cold path (see Iap.connect) while still leaving seconds of slack before
+     * any price is read.
+     */
+    void Iap.warm();
   }
 
   /* --------------------------------------------------------------- levels */
@@ -224,42 +261,28 @@ export class GameScene extends Phaser.Scene {
     // Reflect every wall, keep the ones that land on the drawable half. A left
     // wall mirrors into the right half and drops out; a right wall mirrors onto
     // the player and is exactly the constraint they cannot see.
-    const axis = this.pf.axisX;
-    this.mirrorBands = walls
-      .map((w) => ({ x: 2 * axis - (w.x + w.w), y: w.y, w: w.w, h: w.h }))
-      .filter((w) => w.x < axis && w.x + w.w > this.pf.x);
+    this.mirrorBands = mirrorBands(walls, this.pf.axisX, this.pf.x);
 
     /*
      * One gate per obstacle ROW — the walls facing the player and the bands its
      * reflection has to clear, deduped by height. Crossing a row without dying
      * is what earns a note, so a level plays as a rising phrase and the player
      * hears how far up they got before they look.
-     */
-    const mids = new Set<number>();
-    for (const w of [...walls, ...this.mirrorBands]) {
-      mids.add(Math.round(w.y + w.h / 2));
-    }
-    /*
-     * Collapse rows the eye reads as one.
      *
-     * Deduping on the exact rounded midpoint is not enough: measured across the
-     * shipped set, 1044 pairs of walls sit within 10px of each other, on 272 of
-     * the 300 levels, some as close as 1px. Each pair fired two notes and two
-     * haptic ticks in the same frame — a chord and a double-buzz where the
-     * player crossed one row. `mid` is only read by the crossing test, so
-     * keeping the higher of a close pair loses nothing.
+     * The rows come from `core/Gates` rather than being computed here, because
+     * the replay video has to sound like the game: two definitions of where a
+     * row is would put the notes of a shared clip somewhere other than where
+     * the player heard them.
      */
-    const ROW_MERGE = pt(8);
-    this.gates = [];
-    for (const mid of [...mids].sort((a, b) => b - a)) {
-      const prev = this.gates[this.gates.length - 1];
-      if (prev && Math.abs(prev.mid - mid) < ROW_MERGE) continue;
-      this.gates.push({ mid, passed: false });
-    }
+    this.gates = obstacleRows(walls, this.mirrorBands).map((mid) => ({
+      mid,
+      passed: false,
+    }));
 
     this.attempts = 0;
     this.advancing = false;
     this.lastAttempt = null;
+    this.runAttempts = [];
     this.winRatio = null;
     this.winMedal = false;
     this.levelReveals = 0;
@@ -441,6 +464,30 @@ export class GameScene extends Phaser.Scene {
 
   /* -------------------------------------------------------- state changes */
 
+  /**
+   * Keep the attempt that just ended, normalized, for the replay.
+   *
+   * Normalized rather than in pixels for the same reason saved figures are: the
+   * video is rendered at 1080×1920, not at the playfield's size, and the two
+   * have different proportions.
+   *
+   * Bounded. A level someone is stuck on can run to dozens of attempts and the
+   * replay only shows the last few — keeping the rest would be memory held for
+   * frames nobody will ever see.
+   */
+  private recordAttempt(died: boolean): void {
+    if (this.recorder.points.length < 2) return;
+    const t0 = this.recorder.times[0] ?? 0;
+    this.runAttempts.push({
+      points: this.recorder.points.map((p) => this.pf.toNormalized(p)),
+      times: this.recorder.times.map((t) => t - t0),
+      died,
+    });
+    if (this.runAttempts.length > MAX_REPLAY_ATTEMPTS) {
+      this.runAttempts.splice(0, this.runAttempts.length - MAX_REPLAY_ATTEMPTS);
+    }
+  }
+
   private fail(contact: Vec2, mirrorDeath = false): void {
     this.recorder.pushExact(contact, this.time.now);
     this.phase = 'failed';
@@ -453,6 +500,7 @@ export class GameScene extends Phaser.Scene {
     // teaches instead of just taxing. Frustration that informs brings the
     // player back; frustration that withholds sends them away.
     this.lastAttempt = [...this.recorder.points];
+    this.recordAttempt(true);
 
     Haptics.thud();
     Audio.thud();
@@ -555,8 +603,13 @@ export class GameScene extends Phaser.Scene {
       });
     }
 
-    // Keep the figure. Normalized, with its timing, so it can be redrawn on any
-    // device at any size — including 1080×1080 in someone else's feed.
+    // The winning stroke closes the run: the replay is every attempt in order,
+    // and this is the one it ends on.
+    this.recordAttempt(false);
+
+    // Keep the figure. Normalized, with its timing and the maze it was drawn
+    // through, so the whole picture can be redrawn on any device at any size —
+    // including full size in someone else's feed.
     const t0 = this.recorder.times[0] ?? 0;
     Progress.addFigure({
       levelId: this.level.id,
@@ -565,6 +618,9 @@ export class GameScene extends Phaser.Scene {
       times: this.recorder.times.map((t) => t - t0),
       ms: elapsed,
       at: Date.now(),
+      walls: this.level.walls,
+      start: this.level.start,
+      goal: this.level.goal,
     });
 
     this.ink.presentWin(this.recorder.points, this.recorder.times);
@@ -709,28 +765,88 @@ export class GameScene extends Phaser.Scene {
      * at all can be offered, a card whose only live control is "Not now" is
      * worse than saying the plain truth.
      */
-    const pack = Iap.available ? Iap.revealPackProduct() : null;
+    const packs = Iap.available ? Iap.revealPacks() : [];
+    const base = packs[0];
+
     const offers: Array<{
       text: string;
+      sub?: string;
       variant: 'primary' | 'secondary';
+      /** Set on rows whose caption can still change — see the warm below. */
+      priced?: string;
       press: () => void;
     }> = [];
 
     if (Ads.rewardedAvailable) {
       offers.push({
-        text: 'Watch an ad · +1',
+        // Say what lands. "+1" alone left the player to infer the unit from a
+        // sheet whose whole subject is reveals, next to rows that spell theirs
+        // out — the free option read as the vaguer of the two.
+        text: 'Watch an ad',
+        sub: '+1 reveal, free',
         variant: 'primary',
         press: () => void this.earnReveal(),
       });
     }
-    if (pack) {
-      const price = pack.priceString ? ` · ${pack.priceString}` : '';
+
+    /*
+     * The ladder: count on the face, price and what it saves underneath.
+     *
+     * Two lines rather than one long caption. `30 reveals · $1.99 · save 33%`
+     * is a run-on that the eye has to parse before it can compare rows, and
+     * comparing rows is the only thing this sheet is for. Split, the counts
+     * line up down the left of the card and the value story sits quietly under
+     * each one.
+     */
+    for (const pack of packs) {
+      const saving = base ? packSaving(base, pack) : null;
       offers.push({
-        text: `20 reveals${price}`,
+        text: `${pack.count} reveals`,
+        sub: [pack.priceString, saving === null ? '' : `save ${saving}%`]
+          .filter(Boolean)
+          .join(' · '),
         variant: 'secondary',
+        priced: pack.id,
         press: () =>
           void (async () => {
-            await Iap.buyRevealPack();
+            await Iap.buyRevealPack(pack.id);
+            this.refreshHud();
+          })(),
+      });
+    }
+
+    /*
+     * Remove Ads is the LAST rung, not a separate product on another screen.
+     *
+     * The ladder reads 10, 20, 30, then reveals that never run out — each rung
+     * better value per reveal than the one above it, ending somewhere no pack
+     * can reach. That makes the permanent unlock the obvious end of the row
+     * rather than something the player has to go and find, and it is the
+     * highest-value conversion in the game. This is also the one moment it
+     * answers a question the player is actually asking: they are out of
+     * reveals.
+     *
+     * Named "Remove ads", the SAME name it has on the menu and — this is the
+     * part that decides it — the same name Apple prints in the purchase
+     * confirmation. It read "Unlimited reveals" here for one build, which is a
+     * better headline on a sheet about reveals and was still wrong: one product
+     * wearing two names at one price looks like two products, and the player
+     * finds out which it was in the system dialog, at the moment they pay. What
+     * it gives goes on the second line, where there is room to say all of it.
+     *
+     * Owners never see it: unlimited reveals means `spendReveal` always
+     * succeeds and this sheet never opens.
+     */
+    const removeAds = Iap.available ? Iap.removeAdsProduct() : null;
+    if (removeAds && !Progress.data.adsRemoved) {
+      offers.push({
+        text: 'Remove ads',
+        sub: [removeAds.priceString, 'unlimited reveals, no ads'].filter(Boolean).join(' · '),
+        variant: 'secondary',
+        priced: removeAds.id,
+        press: () =>
+          void (async () => {
+            if (await Iap.buyRemoveAds()) applyEntitlement(true);
             this.refreshHud();
           })(),
       });
@@ -750,51 +866,68 @@ export class GameScene extends Phaser.Scene {
     dim.on(Phaser.Input.Events.GAMEOBJECT_POINTER_UP, () => this.closeRefillSheet());
     sheet.add(dim);
 
-    const cw = pt(280);
     /*
-     * Height derived from the row count rather than a literal per case — the
-     * same lesson the menu stack learned when a hand-placed row got drawn off
-     * the bottom of the canvas. Title gap, one gap per extra offer, the tail
-     * gap to "Not now", its half height, and the bottom pad.
+     * Laid out from a running cursor rather than a formula per case.
+     *
+     * The card grew from two rows to five when the packs became a ladder, and
+     * every row now carries a second line. A single arithmetic expression for
+     * the height stopped being checkable at that point — the menu stack learned
+     * the same lesson when a hand-placed row got drawn off the bottom of the
+     * canvas. Measure the rows, then draw the card around them.
      */
-    const ch = pt(58) + pt(48) * (offers.length - 1) + pt(46) + pt(16) + pt(28);
+    const cw = pt(292);
+    const ROW = pt(50);
+    const GAP = pt(9);
+    const TITLE_TO_ROWS = pt(30);
+    const ROWS_TO_TAIL = pt(16);
+    const TAIL = pt(30);
+    const PAD_TOP = pt(26);
+    const PAD_BOTTOM = pt(20);
+
+    const rowsHeight = offers.length * ROW + (offers.length - 1) * GAP;
+    const ch =
+      PAD_TOP + pt(20) + TITLE_TO_ROWS + rowsHeight + ROWS_TO_TAIL + TAIL + PAD_BOTTOM;
     const cy = BASE_HEIGHT / 2;
+    const top = cy - ch / 2;
+
     const card = this.add.graphics();
-    softShadow(card, BASE_WIDTH / 2 - cw / 2, cy - ch / 2, cw, ch, RADIUS.md, 0.8);
+    softShadow(card, BASE_WIDTH / 2 - cw / 2, top, cw, ch, RADIUS.md, 0.8);
     card.fillStyle(t.paper, 1);
-    roundRect(card, BASE_WIDTH / 2 - cw / 2, cy - ch / 2, cw, ch, RADIUS.md);
+    roundRect(card, BASE_WIDTH / 2 - cw / 2, top, cw, ch, RADIUS.md);
     sheet.add(card);
 
     sheet.add(
-      label(this, BASE_WIDTH / 2, cy - ch / 2 + pt(24), 'Out of reveals', {
+      label(this, BASE_WIDTH / 2, top + PAD_TOP + pt(10), 'Out of reveals', {
         size: TYPE.body,
         font: FONT.display,
         alpha: 0.8,
       }).setOrigin(0.5)
     );
 
-    let rowY = cy - ch / 2 + pt(58);
-    offers.forEach((offer, i) => {
-      if (i > 0) rowY += pt(48);
-      sheet.add(
-        button(this, BASE_WIDTH / 2, rowY, offer.text, {
-          width: cw - pt(32),
-          height: pt(40),
-          variant: offer.variant,
-          size: TYPE.label,
-          onPress: () => {
-            this.closeRefillSheet();
-            offer.press();
-          },
-        })
-      );
-    });
+    const pricedRows = new Map<string, Phaser.GameObjects.Container>();
+    let rowY = top + PAD_TOP + pt(20) + TITLE_TO_ROWS + ROW / 2;
+    for (const offer of offers) {
+      const row = button(this, BASE_WIDTH / 2, rowY, offer.text, {
+        width: cw - pt(30),
+        height: ROW,
+        variant: offer.variant,
+        size: TYPE.label,
+        sub: offer.sub || undefined,
+        onPress: () => {
+          this.closeRefillSheet();
+          offer.press();
+        },
+      });
+      if (offer.priced) pricedRows.set(offer.priced, row);
+      sheet.add(row);
+      rowY += ROW + GAP;
+    }
 
-    rowY += pt(46);
+    rowY += ROWS_TO_TAIL - GAP;
     sheet.add(
       button(this, BASE_WIDTH / 2, rowY, 'Not now', {
-        width: cw - pt(32),
-        height: pt(32),
+        width: cw - pt(30),
+        height: TAIL,
         variant: 'ghost',
         size: TYPE.label,
         onPress: () => this.closeRefillSheet(),
@@ -802,6 +935,53 @@ export class GameScene extends Phaser.Scene {
     );
 
     this.refillSheet = sheet;
+
+    /*
+     * Fill the price in if the store has not answered yet.
+     *
+     * `Iap.warm()` is fired from create(), so by the time anyone has spent two
+     * reveals the price is normally already known and this does nothing. It
+     * covers the one case that is not: a player who empties the stash within a
+     * second or two of the level opening, on a slow connection.
+     */
+    /*
+     * Fill the prices in if the store has not answered yet.
+     *
+     * `Iap.warm()` is fired from create(), so by the time anyone has spent two
+     * reveals the prices are normally already known and this does nothing. It
+     * covers the one case that is not: a player who empties the stash within a
+     * second or two of the level opening, on a slow connection.
+     *
+     * Rebuilt from the same expressions the rows were built from, so a caption
+     * that changes here cannot drift from one that did not.
+     */
+    if (offers.some((o) => o.priced && !o.sub)) {
+      void (async () => {
+        await Iap.warm();
+        if (this.refillSheet !== sheet) return; // they closed it meanwhile
+
+        const fresh = Iap.revealPacks();
+        const freshBase = fresh[0];
+        for (const pack of fresh) {
+          if (!pack.priceString) continue;
+          const saving = freshBase ? packSaving(freshBase, pack) : null;
+          setButtonSub(
+            pricedRows.get(pack.id) ?? null,
+            [pack.priceString, saving === null ? '' : `save ${saving}%`]
+              .filter(Boolean)
+              .join(' · ')
+          );
+        }
+
+        const unlock = Iap.removeAdsProduct();
+        if (unlock?.priceString) {
+          setButtonSub(
+            pricedRows.get(unlock.id) ?? null,
+            `${unlock.priceString} · unlimited reveals, no ads`
+          );
+        }
+      })();
+    }
   }
 
   /**
@@ -853,12 +1033,49 @@ export class GameScene extends Phaser.Scene {
      * That is also the exact geometry AdMob disables serving over.
      */
     if (this.refillSheet || this.webDailyEnd) return;
+    /*
+     * Never over a live rescue offer, and the reason is money before manners.
+     *
+     * "See the folded walls?" and "Skip this fold" are rewarded-video asks, and
+     * a rewarded impression is worth about three times an interstitial one —
+     * roughly $15-25 eCPM against a single-digit interstitial, at near-total
+     * fill. Burning the moment on the cheaper format does not just annoy
+     * somebody who is already stuck; it converts the best-paying inventory in
+     * the game into the worst-paying, and takes the retention lift that a
+     * rewarded rescue at a difficulty spike is measured to give with it.
+     *
+     * The counts are arranged so this is the normal case, not the exception:
+     * the reveal offer lands at three deaths and the skip at six, and the
+     * interstitial cannot arm until eight.
+     */
+    if (this.revealOfferPill || this.skipPill) return;
     if (!Ads.wouldShowOnAttempt(this.onboardingIndex, Progress.data.attemptsSinceAd)) return;
 
     const shown = await Ads.showInterstitial();
     // Only spend the counter when an ad actually rendered; on no-fill it stays
     // armed so the next eligible retry tries again.
     if (shown) Progress.update({ attemptsSinceAd: 0 });
+  }
+
+  /**
+   * Where a floating pill sits: `lift` above the banner line, but never on top
+   * of the start marker.
+   *
+   * All three pills — reveal, skip, share — were anchored to the banner and
+   * nothing else, and the start dot is at the bottom of almost every maze
+   * because the player draws upward. So the two collided by default: "See the
+   * folded walls?" was drawn through the dot, and the win screen's "Share this
+   * fold" covered it outright. Not a cosmetic overlap either — the start is the
+   * one thing on the board a player has to be able to find and touch.
+   *
+   * Lifting rather than dropping, because below the start there is only the
+   * banner. Clamped so a maze that starts high cannot push a pill up into the
+   * playfield.
+   */
+  private pillY(lift: number): number {
+    const anchored = BASE_HEIGHT - METRICS.bannerReserve - lift;
+    const clear = this.startPx.y - METRICS.startRadius * 2.4 - pt(28);
+    return Math.max(BASE_HEIGHT * 0.62, Math.min(anchored, clear));
   }
 
   /* ---------------------------------------------------------------- share */
@@ -870,31 +1087,65 @@ export class GameScene extends Phaser.Scene {
   private showShareOffer(delay: number): void {
     this.clearShareOffer();
 
-    // pt(62) up, NOT pt(34): the "tap for the next fold" hint is bottom-anchored
-    // at the banner line right below, and at pt(34) the pill's lower half sat
-    // on top of the hint's first line — two messages through each other.
-    const pill = button(this, BASE_WIDTH / 2, BASE_HEIGHT - METRICS.bannerReserve - pt(62), 'Share this fold', {
-      width: pt(190),
-      height: pt(40),
-      variant: 'secondary',
-      size: TYPE.label,
-      onPress: () => void this.shareCurrent(),
-    });
-    // An opaque paper backing under the translucent face, and a depth ABOVE
-    // the win layer (30) and its wash (40): without the depth the figure was
-    // drawn straight over the pill, dots through the label text.
-    const backing = this.add.graphics();
-    backing.fillStyle(theme().paper, 1);
-    roundRect(backing, -pt(95), -pt(20), pt(190), pt(40), RADIUS.md);
-    pill.addAt(backing, 0);
-    pill.setDepth(50);
-    pill.setAlpha(0);
-    this.sharePill = pill;
+    /*
+     * TWO shares, because they are two different things to send.
+     *
+     * The replay is the growth loop: a clip of the run — the misses, then the
+     * line that worked — is legible to somebody who has never opened the game
+     * and shows the mechanic in six seconds, which no still image can. The
+     * picture is the personal one: a figure you made, sent to one friend, and
+     * it pastes into a chat as an image rather than something to press play on.
+     *
+     * Side by side rather than stacked: the pill row already sits above the
+     * start marker (see pillY) and a second row would either cover it or push
+     * into the hint at the banner line.
+     */
+    const canReplay = replayVideoSupported() && this.runAttempts.length > 0;
+    const w = canReplay ? pt(146) : pt(190);
+    const gap = pt(8);
+    const y = this.pillY(pt(62));
+    const xs = canReplay
+      ? [BASE_WIDTH / 2 - (w + gap) / 2, BASE_WIDTH / 2 + (w + gap) / 2]
+      : [BASE_WIDTH / 2];
+
+    const row = this.add.container(0, 0).setDepth(50);
+    const make = (x: number, text: string, press: () => void): void => {
+      const pill = button(this, x, y, text, {
+        width: w,
+        height: pt(40),
+        variant: 'secondary',
+        size: TYPE.label,
+        onPress: press,
+      });
+      // An opaque paper backing under the translucent face: without it the win
+      // figure is drawn straight through the pill, dots through the label.
+      const backing = this.add.graphics();
+      backing.fillStyle(theme().paper, 1);
+      roundRect(backing, -w / 2, -pt(20), w, pt(40), RADIUS.md);
+      pill.addAt(backing, 0);
+      row.add(pill);
+    };
+
+    if (canReplay) {
+      make(xs[0], 'Share the replay', () => void this.shareReplay());
+      make(xs[1], 'Share this fold', () => void this.shareCurrent());
+    } else {
+      make(xs[0], 'Share this fold', () => void this.shareCurrent());
+    }
+
+    row.setAlpha(0);
+    this.sharePill = row;
+    this.shareRowRect = {
+      left: xs[0] - w / 2,
+      right: xs[xs.length - 1] + w / 2,
+      top: y - pt(20),
+      bottom: y + pt(20),
+    };
 
     /*
      * Fully opaque BEFORE taps go live, not at the same moment.
      *
-     * `overSharePill` deliberately ignores a pill under half alpha, so an
+     * `overSharePill` deliberately ignores a row under half alpha, so an
      * invisible control cannot be pressed. But the fade used to start exactly
      * when the advance gate opened, so for the ~150ms it took to cross that
      * threshold a reach for the button was read as "next level" — and then the
@@ -904,7 +1155,7 @@ export class GameScene extends Phaser.Scene {
      * alpha rule that keeps an invisible pill untappable.
      */
     this.tweens.add({
-      targets: pill,
+      targets: row,
       alpha: 1,
       delay: Math.max(0, delay - ms(300)),
       duration: ms(300),
@@ -912,6 +1163,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private clearShareOffer(): void {
+    this.shareRowRect = null;
     if (!this.sharePill) return;
     this.tweens.killTweensOf(this.sharePill);
     this.sharePill.destroy(true);
@@ -919,15 +1171,14 @@ export class GameScene extends Phaser.Scene {
   }
 
   private overSharePill(pointer: Phaser.Input.Pointer): boolean {
-    const pill = this.sharePill;
-    if (!pill || pill.alpha < 0.5) return false;
-    const w = pill.width / 2;
-    const h = pill.height / 2;
+    const row = this.sharePill;
+    const rect = this.shareRowRect;
+    if (!row || !rect || row.alpha < 0.5) return false;
     return (
-      pointer.x >= pill.x - w &&
-      pointer.x <= pill.x + w &&
-      pointer.y >= pill.y - h &&
-      pointer.y <= pill.y + h
+      pointer.x >= rect.left &&
+      pointer.x <= rect.right &&
+      pointer.y >= rect.top &&
+      pointer.y <= rect.bottom
     );
   }
 
@@ -951,17 +1202,66 @@ export class GameScene extends Phaser.Scene {
 
       const figure = Progress.figures[0];
       if (!figure) return;
-      const dataUrl = renderShareCard(figure, {
-        caption: `${figure.levelName} · ${(figure.ms / 1000).toFixed(1)}s`,
-      });
+      const dataUrl = renderShareCard(figure, shareCardOptions(figure));
       if (!dataUrl) return;
       await Share.shareFigure({
         dataUrl,
         title: 'My foldwing',
-        text: `One line, mirrored. ${figure.levelName} in ${(figure.ms / 1000).toFixed(1)}s.`,
+        text: shareText(figure),
         fileName: `foldwing-${figure.levelId}-${figure.at}.png`,
       });
     } finally {
+      this.sharing = false;
+    }
+  }
+
+  /**
+   * Send the run as a video: the misses, then the line that worked.
+   *
+   * Rendering is not instant — a few hundred frames go through the hardware
+   * encoder — so the button says what it is doing rather than appearing to
+   * hang. Anything that goes wrong falls back to nothing rather than to a
+   * silent failure: `sharing` is cleared and the hint says so.
+   */
+  private async shareReplay(): Promise<void> {
+    if (this.sharing) return;
+    this.sharing = true;
+    Haptics.tap();
+
+    const figure = Progress.figures[0];
+    const attempts = this.runAttempts;
+    if (!figure || attempts.length === 0) {
+      this.sharing = false;
+      return;
+    }
+
+    const progress = progressCard(this, 'Folding your replay');
+    try {
+      const blob = await renderReplayVideo(
+        {
+          figure,
+          attempts,
+          caption: `${figure.levelName} · ${(figure.ms / 1000).toFixed(1)}s`,
+          challenge: CHALLENGE,
+        },
+        (p) => progress.setProgress(p)
+      );
+
+      if (!blob) {
+        progress.destroy();
+        this.flashHint('could not build the replay — the picture still works');
+        return;
+      }
+
+      progress.destroy();
+      await Share.shareVideo({
+        blob,
+        title: 'My foldwing',
+        text: shareText(figure),
+        fileName: `foldwing-${figure.levelId}-${figure.at}.mp4`,
+      });
+    } finally {
+      progress.destroy();
       this.sharing = false;
     }
   }
@@ -1106,8 +1406,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private showSkipOffer(): void {
-    const y = BASE_HEIGHT - METRICS.bannerReserve - pt(34);
-    this.skipPill = button(this, BASE_WIDTH / 2, y, 'Skip this fold', {
+    this.skipPill = button(this, BASE_WIDTH / 2, this.pillY(pt(34)), 'Watch ad to skip this fold', {
       width: pt(210),
       height: pt(40),
       variant: 'secondary',
@@ -1132,8 +1431,7 @@ export class GameScene extends Phaser.Scene {
    * that sentence means something.
    */
   private showRevealOffer(): void {
-    const y = BASE_HEIGHT - METRICS.bannerReserve - pt(34);
-    this.revealOfferPill = button(this, BASE_WIDTH / 2, y, 'See the folded walls?', {
+    this.revealOfferPill = button(this, BASE_WIDTH / 2, this.pillY(pt(34)), 'See the folded walls?', {
       width: pt(230),
       height: pt(40),
       variant: 'secondary',
@@ -1204,8 +1502,22 @@ export class GameScene extends Phaser.Scene {
 
     this.revealPill = this.buildRevealPill();
 
+    /*
+     * pt(55), not pt(47).
+     *
+     * This slot was drawn for "attempt 3" — two words at micro size — and the
+     * win verdict later moved in at a full type size up. At pt(47) that line
+     * spans base y 79-109 while the Reveal pill occupies 18-86, so the two
+     * genuinely collided: seven pixels of vertical overlap, and the verdict ran
+     * 125px into the pill's column. Nothing was unreadable, which is why it read
+     * as "cramped" rather than "broken".
+     *
+     * pt(55) puts it at 94-126. Clear of the pill above by 8px, and clear below
+     * of everything a level can draw: measured across all 300 mazes, the
+     * highest wall sits at base y 231 and the highest goal ring begins at 135.
+     */
     this.attemptText = this.add
-      .text(BASE_WIDTH / 2, pt(47), '', {
+      .text(BASE_WIDTH / 2, pt(55), '', {
         fontFamily: FONT.ui,
         fontSize: `${TYPE.micro}px`,
         color: `rgba(22,50,60,0.32)`,
@@ -1302,13 +1614,53 @@ export class GameScene extends Phaser.Scene {
       this.dailyDate ? this.level.name : `${this.levelIndex + 1}. ${this.level.name}`
     );
 
-    // On a win the attempt counter's slot becomes the par verdict — one
-    // number that turns every finished level into a score to come back for.
-    // It steps up a type size for the moment, and turns gold with the medal.
+    /*
+     * On a win the attempt counter's slot becomes the verdict on the line —
+     * what turns every finished level into a score to come back for. It steps
+     * up a type size for the moment, and turns gold with the medal.
+     *
+     * Written in words, because the version that was not could not be read.
+     * `your line 1.12× par ◆ · Fold Sense 48` asked the player to know that
+     * "par" is the shortest proved route through the maze, to convert a bare
+     * ratio into a sense of how well they did, to guess what a lone ◆ means,
+     * and to guess what 48 is out of. Reported by the author of the line, who
+     * did not recognise it either.
+     *
+     * TWO FACTS, NOT THREE, and the room decides it. The band this line lives
+     * in runs from the playfield's top edge at base y 88 to the highest thing
+     * any of the 300 mazes draws — a goal ring beginning at 135. Forty-seven
+     * pixels: one line, once. Three facts filled 565px of a 702px field and
+     * read as a ribbon of text rather than a verdict.
+     *
+     * Fold Sense is the one that leaves, and not only because it is longest.
+     * It is a rating averaged over recent wins, so it barely moves from one
+     * level to the next — low information at exactly the moment the player is
+     * looking at something else. It belongs where a profile stat belongs, and
+     * it is already there: the menu chip reads `Fold Sense 61/100` with the
+     * whole width to itself.
+     */
     if (this.phase === 'won' && this.winRatio !== null) {
-      const medal = this.winMedal ? ' · ◆' : '';
+      /*
+       * ❖, a diamond fleuron — a printer's ornament, which is the right
+       * family of mark for a game made of ink on paper. The ◆ it replaces is a
+       * solid black diamond: at this size it out-weighed every word next to it
+       * and read as a bullet rather than an award. Checked against the
+       * alternatives rendered in the real UI font, where ● was rejected for
+       * being the same shape as the start dot and the open forms for being too
+       * light to read as something earned.
+       */
+      const medal = this.winMedal ? '❖ medal · ' : '';
+      /*
+       * Par is the validator's proved route, and a human CAN come in under it:
+       * that route is planned on a 6px grid with clearance for a finger, and a
+       * steady hand cuts corners tighter than it does. So a negative percentage
+       * is reachable, and "-3% over the best line" is nonsense — at or under
+       * par the line simply is the best one.
+       */
+      const over = Math.round((this.winRatio - 1) * 100);
+      const verdict = over <= 0 ? 'the best line there is' : `${over}% over the best line`;
       this.attemptText
-        .setText(`your line ${this.winRatio.toFixed(2)}× par${medal} · Fold Sense ${this.winSense}`)
+        .setText(`${medal}${verdict}`)
         .setFontSize(`${TYPE.label}px`)
         .setColor(this.winMedal ? 'rgba(176,138,32,0.9)' : 'rgba(22,50,60,0.5)');
     } else {

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { admobUnits, adsConfigured, monetization } from './monetization';
+import { admobUnits, adsConfigured, monetization, packSaving } from './monetization';
 
 /*
  * Anchored to this file, not to the working directory. A cwd-relative path
@@ -152,6 +152,81 @@ describe('AdMob identifiers', () => {
   });
 });
 
+describe('the reveal pack', () => {
+  /*
+   * A StoreKit product id is immutable once created, so changing what a pack
+   * contains means creating a NEW product — and the id left behind still
+   * advertises the old count. `…reveals20` granting ten is a player charged for
+   * something other than what the button said, which is the one class of bug in
+   * this file that costs real money and real trust.
+   */
+  it('names in every product id exactly what it grants', () => {
+    for (const pack of monetization.products.revealPacks) {
+      const declared = /\.reveals(\d+)$/.exec(pack.id);
+      expect(declared, pack.id).not.toBeNull();
+      expect(Number(declared![1]), pack.id).toBe(pack.count);
+    }
+  });
+
+  it('keeps the consumables and the permanent unlock distinct', () => {
+    const ids = monetization.products.revealPacks.map((p) => p.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).not.toContain(monetization.products.removeAds);
+  });
+
+  /*
+   * A ladder only works in one direction. Each rung has to give more reveals
+   * for less money apiece than the rung below it, or the middle of the row is
+   * a worse deal than both its neighbours and the player is being asked to do
+   * arithmetic to avoid being overcharged.
+   */
+  it('gets cheaper per reveal as the packs get bigger', () => {
+    const packs = monetization.products.revealPacks;
+    expect(packs.length).toBeGreaterThan(0);
+    for (let i = 1; i < packs.length; i += 1) {
+      expect(packs[i].count).toBeGreaterThan(packs[i - 1].count);
+    }
+  });
+});
+
+/*
+ * "save 25%" is a claim about a price, shown on 175 storefronts. Apple's tiers
+ * are not proportional across currencies, so the same two packs really do save
+ * different amounts in different places — which is why the badge is computed
+ * from the numbers the store returns and never written into the copy.
+ */
+describe('the savings badge', () => {
+  const base = { count: 10, priceMicros: 990_000 };
+
+  it('reports what the bigger pack actually saves per reveal', () => {
+    expect(packSaving(base, { count: 20, priceMicros: 1_490_000 })).toBe(25);
+    expect(packSaving(base, { count: 30, priceMicros: 1_990_000 })).toBe(33);
+  });
+
+  it('follows the local prices rather than the dollar ones', () => {
+    // Same counts, a storefront whose tiers happen to be nearly proportional:
+    // the honest badge there is much smaller, and must say so.
+    expect(packSaving(base, { count: 20, priceMicros: 1_900_000 })).toBe(4);
+  });
+
+  it('says nothing at all rather than something untrue', () => {
+    // No price yet — the store has not answered.
+    expect(packSaving(base, { count: 20, priceMicros: 0 })).toBeNull();
+    expect(packSaving({ count: 10, priceMicros: 0 }, { count: 20, priceMicros: 1 })).toBeNull();
+    // Bigger pack, worse value. This is the 25-at-$1.49 / 30-at-$1.99 shape.
+    expect(
+      packSaving({ count: 25, priceMicros: 1_490_000 }, { count: 30, priceMicros: 1_990_000 })
+    ).toBeNull();
+    // Same value per reveal is not a saving.
+    expect(packSaving(base, { count: 20, priceMicros: 1_980_000 })).toBeNull();
+  });
+
+  it('never divides by a count of zero', () => {
+    expect(packSaving({ count: 0, priceMicros: 990_000 }, base)).toBeNull();
+    expect(packSaving(base, { count: 0, priceMicros: 990_000 })).toBeNull();
+  });
+});
+
 describe('ad cadence', () => {
   const a = monetization.ads;
 
@@ -159,11 +234,39 @@ describe('ad cadence', () => {
     expect(a.interstitialFromLevel).toBeGreaterThanOrEqual(6);
   });
 
-  it('keeps interstitials rare, spaced and capped', () => {
+  it('keeps interstitials rare and spaced', () => {
     expect(a.interstitialEveryNWins).toBeGreaterThanOrEqual(3);
     expect(a.minSecondsBetweenInterstitials).toBeGreaterThanOrEqual(120);
-    expect(a.maxInterstitialsPerSession).toBeLessThanOrEqual(4);
-    expect(a.sessionWarmupSeconds).toBeGreaterThanOrEqual(60);
+    expect(a.lateSecondsBetweenInterstitials).toBeGreaterThanOrEqual(120);
+    expect(a.sessionWarmupSeconds).toBeGreaterThanOrEqual(120);
+  });
+
+  /*
+   * The ladder only makes sense in one direction: generous while the session is
+   * young, tighter once it is clearly long. Inverting the two would put the
+   * heaviest frequency exactly where first-session churn happens, which is the
+   * shape the flat 90s/120s pair had and the reason it was replaced.
+   */
+  it('gets no stricter with time, only more permissive', () => {
+    expect(a.lateSecondsBetweenInterstitials).toBeLessThanOrEqual(
+      a.minSecondsBetweenInterstitials
+    );
+    expect(a.longSessionAfterSeconds).toBeGreaterThan(a.sessionWarmupSeconds);
+  });
+
+  /*
+   * The per-session cap is a backstop, not the pacing mechanism. If it is low
+   * enough to bind before the floors do, it is the cap that shapes the session
+   * — which is what made the old model front-load every ad it would ever show
+   * into the first ten minutes and then go silent.
+   */
+  it('caps above what the time floors alone would allow in a long session', () => {
+    const halfHour = 30 * 60;
+    const reachable = Math.floor(
+      (halfHour - a.sessionWarmupSeconds) / a.lateSecondsBetweenInterstitials
+    );
+    expect(a.maxInterstitialsPerSession).toBeGreaterThanOrEqual(reachable / 2);
+    expect(a.newSessionAfterAwaySeconds).toBeGreaterThanOrEqual(600);
   });
 
   /*
@@ -181,11 +284,22 @@ describe('ad cadence', () => {
 
     const fastestFailSeconds = 3;
     const soonestByCount = a.interstitialEveryNAttempts * fastestFailSeconds;
-    expect(soonestByCount).toBeLessThan(a.minSecondsBetweenInterstitials);
+    expect(soonestByCount).toBeLessThan(a.lateSecondsBetweenInterstitials);
 
     // Worst case a player can actually experience, in minutes between ads.
-    const worstCaseGapMinutes = a.minSecondsBetweenInterstitials / 60;
+    const worstCaseGapMinutes = a.lateSecondsBetweenInterstitials / 60;
     expect(worstCaseGapMinutes).toBeGreaterThanOrEqual(2);
+
+    /*
+     * And the count has to sit BEYOND the rescue ladder. A run of failures is a
+     * difficulty spike, which is where the rewarded offer belongs — it pays
+     * about three times what an interstitial does and lifts retention rather
+     * than spending it. `maybeAdOnRetry` suppresses the interstitial while
+     * either rescue pill is up; this keeps that the normal case.
+     */
+    expect(a.interstitialEveryNAttempts).toBeGreaterThan(
+      monetization.reveals.offerSkipAfterAttempts
+    );
   });
 
   it('stops taxing someone who just watched a rewarded ad', () => {

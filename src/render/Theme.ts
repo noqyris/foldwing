@@ -100,6 +100,31 @@ export function setTheme(id: string): void {
   if (next) active = next;
 }
 
+/**
+ * The mirror's colour: ink pre-blended toward the paper.
+ *
+ * The obvious way to make the reflection quieter is to draw the same ink at
+ * `mirrorAlpha` and let the compositor do it. That does not work, and the
+ * reason survives every renderer: a ribbon is not one shape, it is dozens of
+ * OVERLAPPING quads and discs, and both Phaser Graphics and a 2D canvas
+ * composite each fill separately. Every overlap lands on top of the last, so
+ * 0.45 accumulates to a measured 0.95-0.97 — the reflection renders as solid as
+ * the player's own line, which is exactly the distinction the game is built on.
+ *
+ * Blending the colour instead gives the intended weight in one opaque pass,
+ * immune to how many times the ribbon crosses itself, and costs nothing. It
+ * lives here rather than in a renderer because all of them need it and none of
+ * them should own it.
+ */
+export function veiledInk(ink: number, t: InkTheme = active): number {
+  const mix = (shift: number): number => {
+    const a = (ink >> shift) & 0xff;
+    const b = (t.paper >> shift) & 0xff;
+    return Math.round(b + (a - b) * t.mirrorAlpha) & 0xff;
+  };
+  return (mix(16) << 16) | (mix(8) << 8) | mix(0);
+}
+
 /** CSS rgba() string, for the few places that want one instead of a hex int. */
 export function rgba(color: number, alpha: number): string {
   const r = (color >> 16) & 0xff;

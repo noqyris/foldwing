@@ -133,17 +133,55 @@ const at = (seconds: number): void => {
 
 let ads: AdsService;
 
+/**
+ * The smallest `document` that `watchForNewSession` needs.
+ *
+ * The suite runs in the node environment (see vite.config.ts — everything under
+ * test is pure math and Phaser is never imported), so there is no DOM to
+ * background. Sending the real event through the real listener is worth the
+ * eight lines: the alternative is a test that asserts against a copy of the
+ * rule rather than the rule.
+ */
+type VisibilityListener = () => void;
+let visibilityListeners: VisibilityListener[] = [];
+
+function installDocumentStub(): void {
+  visibilityListeners = [];
+  (globalThis as unknown as { document: unknown }).document = {
+    hidden: false,
+    addEventListener: (event: string, fn: VisibilityListener) => {
+      if (event === 'visibilitychange') visibilityListeners.push(fn);
+    },
+    removeEventListener: () => {},
+  };
+}
+
+const doc = (): { hidden: boolean } =>
+  (globalThis as unknown as { document: { hidden: boolean } }).document;
+
+/** Background the app for `seconds`, then bring it back. */
+const away = (seconds: number): void => {
+  const leftAt = Date.now();
+  doc().hidden = true;
+  for (const fn of [...visibilityListeners]) fn();
+  vi.setSystemTime(leftAt + seconds * 1000);
+  doc().hidden = false;
+  for (const fn of [...visibilityListeners]) fn();
+};
+
 beforeEach(() => {
   stub.reset();
   stub.platform = 'ios';
   vi.useFakeTimers();
   at(0);
+  installDocumentStub();
   // Constructed after the clock is set: sessionStartedAt is a field initialiser.
   ads = new AdsService();
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  delete (globalThis as unknown as { document?: unknown }).document;
 });
 
 describe('the interstitial gate', () => {
@@ -295,10 +333,74 @@ describe('the retry path', () => {
     expect(firedAt.length).toBeGreaterThan(0);
     expect(firedAt.length).toBeLessThanOrEqual(A.maxInterstitialsPerSession);
     for (let i = 1; i < firedAt.length; i += 1) {
-      expect(firedAt[i] - firedAt[i - 1]).toBeGreaterThanOrEqual(
-        A.minSecondsBetweenInterstitials
-      );
+      // The floor is not one number any more — it tightens once the session is
+      // a long one. Each gap is held to whichever floor was in force when the
+      // later ad fired.
+      const floor =
+        firedAt[i] >= A.longSessionAfterSeconds
+          ? A.lateSecondsBetweenInterstitials
+          : A.minSecondsBetweenInterstitials;
+      expect(firedAt[i] - firedAt[i - 1]).toBeGreaterThanOrEqual(floor);
     }
+  });
+});
+
+/*
+ * The session ladder. One flat interval cannot serve both ends of a session:
+ * early frequency is the strongest correlate of someone closing the app for
+ * good, and the same interval half an hour in leaves the most engaged players
+ * unmonetised. These pin the shape rather than the numbers.
+ */
+describe('the session ladder', () => {
+  it('shows nothing at all while the session is young', () => {
+    at(A.sessionWarmupSeconds - 1);
+    expect(ads.wouldShowInterstitial(PLAYING, 999)).toBe(false);
+    expect(ads.wouldShowOnAttempt(PLAYING, 999)).toBe(false);
+
+    at(A.sessionWarmupSeconds + 1);
+    expect(ads.wouldShowInterstitial(PLAYING, 999)).toBe(true);
+  });
+
+  it('spaces them wider early than it does deep into a long sitting', async () => {
+    at(A.sessionWarmupSeconds + 1);
+    expect(await ads.showInterstitial()).toBe(true);
+
+    // Early: the late (tighter) floor is not enough.
+    at(A.sessionWarmupSeconds + 1 + A.lateSecondsBetweenInterstitials);
+    expect(ads.wouldShowInterstitial(PLAYING, 999)).toBe(false);
+    at(A.sessionWarmupSeconds + 1 + A.minSecondsBetweenInterstitials);
+    expect(ads.wouldShowInterstitial(PLAYING, 999)).toBe(true);
+    expect(await ads.showInterstitial()).toBe(true);
+
+    // Past the long-session mark the tighter floor is the one that applies.
+    const late = A.longSessionAfterSeconds + A.lateSecondsBetweenInterstitials;
+    at(late);
+    expect(ads.wouldShowInterstitial(PLAYING, 999)).toBe(true);
+  });
+
+  it('never lets the late floor outrun the early one', () => {
+    expect(A.lateSecondsBetweenInterstitials).toBeLessThanOrEqual(
+      A.minSecondsBetweenInterstitials
+    );
+    expect(A.longSessionAfterSeconds).toBeGreaterThan(A.sessionWarmupSeconds);
+  });
+
+  /*
+   * "Session" used to mean the lifetime of the process: a phone that sat in a
+   * pocket all afternoon came back with the per-session cap already spent and
+   * showed nothing until it was force-quit, while someone who glanced at a
+   * message lost their warm-up grace.
+   */
+  it('starts a new session after a real absence, and not after a glance', () => {
+    at(A.sessionWarmupSeconds + 10);
+    expect(ads.wouldShowInterstitial(PLAYING, 999)).toBe(true);
+
+    away(A.newSessionAfterAwaySeconds - 60);
+    expect(ads.wouldShowInterstitial(PLAYING, 999)).toBe(true);
+
+    away(A.newSessionAfterAwaySeconds + 60);
+    // Back from a real absence: the warm-up is armed again.
+    expect(ads.wouldShowInterstitial(PLAYING, 999)).toBe(false);
   });
 });
 

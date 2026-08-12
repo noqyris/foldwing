@@ -14,7 +14,7 @@
 
 import Phaser from 'phaser';
 import { centredHitArea } from './HitArea';
-import { BASE_WIDTH, METRICS, ms, pt, rgba, theme } from './Theme';
+import { BASE_HEIGHT, BASE_WIDTH, METRICS, ms, pt, rgba, theme, veiledInk } from './Theme';
 
 /**
  * Make a centre-drawn container tappable over its whole face.
@@ -175,6 +175,46 @@ export interface ButtonOptions {
   onPress: () => void;
 }
 
+/** Child names, so a caption can be found again after the button is built. */
+const BUTTON_LABEL = 'button-label';
+const BUTTON_SUB = 'button-sub';
+
+function relabel(
+  container: Phaser.GameObjects.Container | null,
+  name: string,
+  text: string
+): void {
+  if (!container || !container.scene) return;
+  const child = container.getByName(name);
+  if (child instanceof Phaser.GameObjects.Text) child.setText(text);
+}
+
+/**
+ * Rewrite a live button's caption, or the second line under it.
+ *
+ * For the one case where the text is not knowable when the button is built: a
+ * store price arrives from StoreKit a second or so after the sheet offering it
+ * is already on screen. Rebuilding the sheet would flash it; a silent relabel
+ * is what the player expects a price to do.
+ *
+ * Both are no-ops if the container is not a button, or has no second line — a
+ * caller that has destroyed the sheet in the meantime must not throw from a
+ * late callback.
+ */
+export function setButtonText(
+  container: Phaser.GameObjects.Container | null,
+  text: string
+): void {
+  relabel(container, BUTTON_LABEL, text);
+}
+
+export function setButtonSub(
+  container: Phaser.GameObjects.Container | null,
+  text: string
+): void {
+  relabel(container, BUTTON_SUB, text);
+}
+
 /**
  * A pressable card. Returns a Container so callers can position, tween and
  * destroy it as one thing.
@@ -227,6 +267,8 @@ export function button(
     alpha: onInk ? 1 : 0.9,
     font: FONT.ui,
   }).setOrigin(0.5);
+  // Named so a caller can rewrite the caption in place — see `setButtonText`.
+  main.setName(BUTTON_LABEL);
   container.add(main);
 
   if (opts.sub) {
@@ -235,7 +277,9 @@ export function button(
         size: TYPE.label,
         color: labelColor,
         alpha: onInk ? 0.66 : 0.5,
-      }).setOrigin(0.5)
+      })
+        .setOrigin(0.5)
+        .setName(BUTTON_SUB)
     );
   }
 
@@ -370,3 +414,100 @@ export function enter(
 
 /** Width of a comfortable content column, inset from the canvas edges. */
 export const COLUMN = BASE_WIDTH - METRICS.inset.left * 2 - pt(16) * 2;
+
+
+/* --------------------------------------------------------------- progress */
+
+export interface ProgressCard {
+  /** 0..1. Values outside are clamped; the bar never runs backwards visually. */
+  setProgress(p: number): void;
+  setMessage(text: string): void;
+  destroy(): void;
+}
+
+/**
+ * A modal card that says something is being made, and how far along it is.
+ *
+ * The bar is a stroke and its reflection growing out of the fold — the game's
+ * one idea, used as the one place it waits. A generic sweep would have been
+ * quicker to write and would have belonged to no game in particular; this reads
+ * as Foldwing before a word of it is read, which matters most on the surface
+ * whose whole job is to be seen by people who have never played.
+ *
+ * Modal on purpose. It appears after a deliberate tap, it is over in a couple
+ * of seconds, and the alternative — a live board with a frozen button on it —
+ * is what "the share button hangs" looks like.
+ */
+export function progressCard(scene: Phaser.Scene, message: string): ProgressCard {
+  const t = theme();
+  const cx = BASE_WIDTH / 2;
+  const cy = BASE_HEIGHT / 2;
+
+  const root = scene.add.container(0, 0).setDepth(95);
+
+  const scrim = scene.add
+    .rectangle(cx, cy, BASE_WIDTH * 2, BASE_HEIGHT * 2, t.ink, 0.28)
+    .setInteractive();
+  // Swallow taps: the board underneath must not take them while this is up.
+  scrim.on(Phaser.Input.Events.GAMEOBJECT_POINTER_UP, () => undefined);
+  root.add(scrim);
+
+  const cw = pt(250);
+  const ch = pt(104);
+  const card = scene.add.graphics();
+  softShadow(card, cx - cw / 2, cy - ch / 2, cw, ch, RADIUS.md, 0.8);
+  card.fillStyle(t.paper, 1);
+  roundRect(card, cx - cw / 2, cy - ch / 2, cw, ch, RADIUS.md);
+  root.add(card);
+
+  const text = label(scene, cx, cy - pt(20), message, {
+    size: TYPE.body,
+    font: FONT.display,
+    alpha: 0.8,
+  }).setOrigin(0.5);
+  root.add(text);
+
+  const barW = cw - pt(64);
+  const barY = cy + pt(16);
+  const nib = Math.max(2, pt(2.4));
+
+  // The rule the two halves grow away from, dashed exactly as the board's is.
+  const axis = scene.add.graphics();
+  axis.fillStyle(t.ink, t.axisAlpha * 2);
+  for (let y = barY - pt(9); y < barY + pt(9); y += pt(5)) {
+    axis.fillRect(cx - pt(0.5), y, pt(1), pt(3));
+  }
+  root.add(axis);
+
+  const bar = scene.add.graphics();
+  root.add(bar);
+
+  let shown = 0;
+  const paint = (p: number): void => {
+    const half = (barW / 2) * p;
+    bar.clear();
+    if (half <= 0) return;
+    // The player's side at full ink, the reflection veiled — the same weights
+    // the board gives them, so the bar is the game in miniature.
+    bar.fillStyle(t.ink, 1);
+    bar.fillRect(cx - half, barY - nib / 2, half, nib);
+    bar.fillStyle(veiledInk(t.ink, t), 1);
+    bar.fillRect(cx, barY - nib / 2, half, nib);
+  };
+  paint(0);
+
+  return {
+    setProgress(p: number): void {
+      // Monotonic: an encoder that reports a frame twice must not make the bar
+      // twitch backwards, which reads as something having gone wrong.
+      shown = Math.max(shown, Math.min(1, Math.max(0, p)));
+      paint(shown);
+    },
+    setMessage(next: string): void {
+      text.setText(next);
+    },
+    destroy(): void {
+      root.destroy(true);
+    },
+  };
+}

@@ -30,6 +30,25 @@ export class BootScene extends Phaser.Scene {
 
     Progress.installLifecycleFlush();
     void Progress.load().then((save) => {
+      /*
+       * What this device can actually do, recorded at boot — AFTER the load.
+       *
+       * `load()` replaces the whole state with what came off disk, so writing
+       * this before it is writing into an object that is about to be thrown
+       * away. It cost one round trip through the simulator to find, which is
+       * the argument for the line existing at all: the replay button hides
+       * itself when the encoder is missing, and from the outside that is
+       * indistinguishable from being on an older build. Settings shows it.
+       */
+      const g = globalThis as unknown as Record<string, unknown>;
+      Progress.update({
+        capability: [
+          `v${g.VideoEncoder ? 1 : 0}`,
+          `a${g.AudioEncoder ? 1 : 0}`,
+          `m${g.MediaRecorder ? 1 : 0}`,
+        ].join(' '),
+      });
+
       // Apply the player's settings before the first scene that could make a
       // sound or buzz. Both services defaulted to on and had no caller at all
       // until settings existed.

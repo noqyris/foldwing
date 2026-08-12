@@ -41,6 +41,106 @@ export function semitone(step: number): number {
   return degree + octave * 12;
 }
 
+export const noteHz = (step: number): number =>
+  ROOT_HZ * Math.pow(2, semitone(step) / 12);
+
+/*
+ * The voices, scheduled at an explicit time on an explicit context.
+ *
+ * They take `at` rather than reading `ctx.currentTime` so the replay video can
+ * render the same sounds through an OfflineAudioContext, minutes of gameplay
+ * laid out in one pass and encoded into the clip. Two synths would mean a video
+ * that sounds nearly like the game, and "nearly" is what makes a thing feel
+ * fake.
+ */
+
+export function scheduleTone(
+  ctx: BaseAudioContext,
+  out: AudioNode,
+  at: number,
+  hz: number,
+  seconds: number,
+  peak: number,
+  type: OscillatorType
+): void {
+  const osc = ctx.createOscillator();
+  osc.type = type;
+  osc.frequency.value = hz;
+
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.0001, at);
+  gain.gain.exponentialRampToValueAtTime(peak, at + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, at + seconds);
+
+  osc.connect(gain).connect(out);
+  osc.start(at);
+  osc.stop(at + seconds + 0.02);
+}
+
+/** One obstacle row cleared: the next note up the phrase. */
+export function scheduleNote(
+  ctx: BaseAudioContext,
+  out: AudioNode,
+  at: number,
+  step: number
+): void {
+  const hz = noteHz(step);
+  scheduleTone(ctx, out, at, hz, 0.55, 0.16, 'triangle');
+  // A quiet octave above gives the note a little shine without a second voice
+  // being audible as a separate sound.
+  scheduleTone(ctx, out, at, hz * 2, 0.32, 0.045, 'sine');
+}
+
+/** Collision: a dropped pen, not a buzzer. */
+export function scheduleThud(ctx: BaseAudioContext, out: AudioNode, at: number): void {
+  // Body: a low tone that falls as it decays.
+  const osc = ctx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(150, at);
+  osc.frequency.exponentialRampToValueAtTime(58, at + 0.16);
+
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.0001, at);
+  gain.gain.exponentialRampToValueAtTime(0.3, at + 0.006);
+  gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.22);
+
+  osc.connect(gain).connect(out);
+  osc.start(at);
+  osc.stop(at + 0.24);
+
+  // Transient: a very short filtered noise burst, which is what makes it read
+  // as a physical knock rather than a synth blip.
+  const frames = Math.floor(ctx.sampleRate * 0.05);
+  const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < frames; i++) {
+    data[i] = (Math.random() * 2 - 1) * (1 - i / frames);
+  }
+
+  const noise = ctx.createBufferSource();
+  noise.buffer = buffer;
+
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 900;
+
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(0.12, at);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, at + 0.06);
+
+  noise.connect(lp).connect(noiseGain).connect(out);
+  noise.start(at);
+  noise.stop(at + 0.06);
+}
+
+/** A soft mark for the win, under the figure rather than over it. */
+export function scheduleChime(ctx: BaseAudioContext, out: AudioNode, at: number): void {
+  const root = ROOT_HZ * 2;
+  [0, 4, 7].forEach((semi, i) => {
+    scheduleTone(ctx, out, at + i * 0.09, root * Math.pow(2, semi / 12), 0.9, 0.09, 'sine');
+  });
+}
+
 class AudioService {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -87,98 +187,21 @@ class AudioService {
 
   /** One obstacle cleared: the next note up. */
   note(): void {
-    if (!this.ready()) return;
-    const hz = ROOT_HZ * Math.pow(2, semitone(this.step) / 12);
+    if (!this.ready() || !this.ctx || !this.master) return;
+    scheduleNote(this.ctx, this.master, this.ctx.currentTime, this.step);
     this.step += 1;
-    this.tone(hz, 0.55, 0.16, 'triangle');
-    // A quiet octave above gives the note a little shine without a second voice
-    // being audible as a separate sound.
-    this.tone(hz * 2, 0.32, 0.045, 'sine');
   }
 
   /** Collision: a dropped pen. */
   thud(): void {
-    if (!this.ready()) return;
-    const ctx = this.ctx;
-    const master = this.master;
-    if (!ctx || !master) return;
-
-    const now = ctx.currentTime;
-
-    // Body: a low tone that falls as it decays.
-    const osc = ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(150, now);
-    osc.frequency.exponentialRampToValueAtTime(58, now + 0.16);
-
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.3, now + 0.006);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
-
-    osc.connect(gain).connect(master);
-    osc.start(now);
-    osc.stop(now + 0.24);
-
-    // Transient: a very short filtered noise burst, which is what makes it read
-    // as a physical knock rather than a synth blip.
-    const frames = Math.floor(ctx.sampleRate * 0.05);
-    const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < frames; i++) {
-      data[i] = (Math.random() * 2 - 1) * (1 - i / frames);
-    }
-
-    const noise = ctx.createBufferSource();
-    noise.buffer = buffer;
-
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = 900;
-
-    const noiseGain = ctx.createGain();
-    noiseGain.gain.setValueAtTime(0.12, now);
-    noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.06);
-
-    noise.connect(lp).connect(noiseGain).connect(master);
-    noise.start(now);
-    noise.stop(now + 0.06);
+    if (!this.ready() || !this.ctx || !this.master) return;
+    scheduleThud(this.ctx, this.master, this.ctx.currentTime);
   }
 
   /** A soft mark for the win, under the figure rather than over it. */
   chime(): void {
-    if (!this.ready()) return;
-    const root = ROOT_HZ * 2;
-    [0, 4, 7].forEach((semi, i) => {
-      window.setTimeout(() => {
-        this.tone(root * Math.pow(2, semi / 12), 0.9, 0.09, 'sine');
-      }, i * 90);
-    });
-  }
-
-  private tone(
-    hz: number,
-    seconds: number,
-    peak: number,
-    type: OscillatorType
-  ): void {
-    const ctx = this.ctx;
-    const master = this.master;
-    if (!ctx || !master) return;
-
-    const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    osc.type = type;
-    osc.frequency.value = hz;
-
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(peak, now + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + seconds);
-
-    osc.connect(gain).connect(master);
-    osc.start(now);
-    osc.stop(now + seconds + 0.02);
+    if (!this.ready() || !this.ctx || !this.master) return;
+    scheduleChime(this.ctx, this.master, this.ctx.currentTime);
   }
 
   private ready(): boolean {

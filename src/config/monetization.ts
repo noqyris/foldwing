@@ -124,13 +124,44 @@ export const monetization = {
   products: {
     /** Non-consumable. Kills the banner and interstitials, unlocks unlimited reveals. */
     removeAds: 'com.noqyris.foldwing.removeads',
+
     /**
-     * Consumable hint pack — the second pillar of puzzle IAP. Offered at the
-     * out-of-reveals moment, next to the rewarded option, never instead of
-     * it: reveals must stay earnable or the rewarded loop stops being honest.
+     * THE LADDER, cheapest first, and it ends at Remove Ads on purpose.
+     *
+     *     10 reveals   $0.99   9.90¢ each
+     *     20 reveals   $1.49   7.45¢ each   (−25%)
+     *     30 reveals   $1.99   6.63¢ each   (−33%)
+     *     unlimited    $2.99   —            and no ads, ever
+     *
+     * Four rungs, each better value than the last, and the top one is not a
+     * pack at all. A dollar past the 30-pack buys reveals that never run out,
+     * which makes the permanent unlock the obvious end of the row rather than a
+     * separate thing sold on another screen — and a permanent unlock is worth
+     * more than any number of consumables from a player who was going to spend
+     * once.
+     *
+     * WHY THESE COUNTS AND NOT 10/25/30. Twenty-five at $1.49 works on its own
+     * (6.0¢) but not with thirty at $1.99 above it (6.63¢): the bigger pack
+     * would cost MORE per reveal than the smaller one, so the row stops being a
+     * ladder and starts being a trap for whoever does not do the arithmetic.
+     * Every rung has to beat the one below it on unit price — pinned by a test.
+     *
+     * The consumables must also stay strictly under the price of unlimited. A
+     * pack priced the same as unlimited-plus-no-ads cannot be bought by anyone
+     * who reads both rows; that was the state when the 10-pack and Remove Ads
+     * both sat at $0.99, and it is why the top of the ladder moved to $2.99
+     * when a $1.99 pack was added underneath it.
+     *
+     * Counts live in the product ids because a StoreKit id is immutable —
+     * changing what a pack holds means a new product, and an id that disagrees
+     * with the count is a player charged for something other than what the
+     * button said.
      */
-    revealPack: 'com.noqyris.foldwing.reveals20',
-    revealPackCount: 20,
+    revealPacks: [
+      { id: 'com.noqyris.foldwing.reveals10', count: 10 },
+      { id: 'com.noqyris.foldwing.reveals20', count: 20 },
+      { id: 'com.noqyris.foldwing.reveals30', count: 30 },
+    ],
   },
 
   ads: {
@@ -153,20 +184,64 @@ export const monetization = {
      * disabled for it, so the count is the permission and the clock is the
      * brake. Industry practice is exactly this pair — minimum seconds AND
      * minimum actions since the last ad, both required.
+     *
+     * Raised from 5 to 8 deliberately. A run of failures is a difficulty spike,
+     * and a difficulty spike is where the REWARDED offer belongs: measured
+     * across casual titles, rewarded video at a difficulty spike lifts
+     * retention, while interstitial frequency is the single strongest
+     * correlate of first-session churn. The rescue ladder already fires at
+     * three deaths and six; by the time this count is reached the game is
+     * selling the thing that pays three times as much (see the suppression in
+     * `maybeAdOnRetry`).
      */
-    interstitialEveryNAttempts: 5,
+    interstitialEveryNAttempts: 8,
 
     /**
-     * Hard floor between two interstitials, whatever the counters say. This is
-     * the number that actually governs pacing on a level someone is stuck on.
+     * THE SESSION LADDER.
+     *
+     * Ads get less rare the longer someone has been playing, instead of one
+     * flat interval that is either too aggressive at minute one or too shy at
+     * minute thirty. The shape is the one that holds up across casual
+     * benchmarks: rewarded only while the session is young, interstitials at a
+     * generous spacing once the player is engaged, tightening after they have
+     * settled in for a long sitting.
+     *
+     * The previous flat pair — 90s warm-up, 120s floor, four per session —
+     * front-loaded every ad it was ever going to show into the first ten
+     * minutes and then went silent for the rest of the session. That is
+     * backwards on both ends: heaviest exactly where churn happens, and
+     * nothing at all from the players least likely to leave.
      */
-    minSecondsBetweenInterstitials: 120,
 
-    /** No ad in the opening stretch of a session, however many events land. */
-    sessionWarmupSeconds: 90,
+    /** No ad at all while the session is this young. Rewarded still works. */
+    sessionWarmupSeconds: 180,
 
-    /** Bounded per session regardless of how long someone plays. */
-    maxInterstitialsPerSession: 4,
+    /** Floor between two interstitials for the rest of the first stretch. */
+    minSecondsBetweenInterstitials: 180,
+
+    /** Once a session has run this long, the floor drops to the value below. */
+    longSessionAfterSeconds: 600,
+    lateSecondsBetweenInterstitials: 120,
+
+    /**
+     * Bounded per session however long someone plays — a backstop, not the
+     * pacing mechanism. At the floors above, a session would have to run past
+     * twenty minutes to reach it.
+     */
+    maxInterstitialsPerSession: 8,
+
+    /**
+     * Away this long and the next launch counts as a NEW session: warm-up
+     * re-arms and the per-session cap resets.
+     *
+     * "Session" used to mean the lifetime of the process, so a phone that sat
+     * in a pocket all afternoon came back with the cap already spent and never
+     * showed another ad until the app was force-quit — while a player who
+     * merely checked a message lost their warm-up grace. Thirty minutes is the
+     * usual line between "still the same sitting" and "came back later".
+     */
+    newSessionAfterAwaySeconds: 1800,
+
     /** After a volunteered rewarded view, stop taxing them for a while. */
     muteAfterRewardedSeconds: 300,
   },
@@ -197,6 +272,36 @@ export const monetization = {
     firstPromptAfterWins: 6,
   },
 } as const;
+
+/** What a store row needs to work out whether it is a better deal. */
+export interface PricedPack {
+  readonly count: number;
+  /** Localised price in millionths. 0 when the store has not answered yet. */
+  readonly priceMicros: number;
+}
+
+/**
+ * How much cheaper per reveal a pack is than the cheapest one, as a percent.
+ *
+ * Computed from real numbers rather than written into the copy, because the
+ * copy would be a lie in most of the world: Apple's price tiers are not
+ * proportional across storefronts, so a pack that saves 25% in dollars can save
+ * 19% or 31% somewhere else. A badge that says otherwise is a false claim about
+ * a price, on 175 storefronts, made by a string literal.
+ *
+ * Null whenever the claim cannot be made honestly — before the store has
+ * answered, or when the bigger pack is not actually better value. Callers show
+ * no badge rather than a zero.
+ */
+export function packSaving(base: PricedPack, pack: PricedPack): number | null {
+  if (base.priceMicros <= 0 || pack.priceMicros <= 0) return null;
+  if (base.count <= 0 || pack.count <= 0) return null;
+
+  const perReveal = pack.priceMicros / pack.count;
+  const basePerReveal = base.priceMicros / base.count;
+  const saved = Math.round((1 - perReveal / basePerReveal) * 100);
+  return saved > 0 ? saved : null;
+}
 
 const isAndroid = (): boolean => Capacitor.getPlatform() === 'android';
 

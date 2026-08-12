@@ -28,30 +28,61 @@ export interface StoreProduct {
   id: string;
   title: string;
   description: string;
+  /** Localised, formatted, ready to print. Empty until the store answers. */
   priceString: string;
+  /**
+   * The same price as a number, in millionths.
+   *
+   * Kept alongside the string because the string cannot be compared: it is
+   * localised, so "1,49 €" and "$1.49" and "¥250" all arrive as text in
+   * whatever shape that storefront uses. Any claim about one price relative to
+   * another — every "save 25%" in the store — has to be computed from this.
+   */
+  priceMicros: number;
+}
+
+/** A consumable rung of the ladder, with what it grants. */
+export interface RevealPack extends StoreProduct {
+  count: number;
 }
 
 export interface IapService {
   /** True when a purchase can actually be made right now. */
   readonly available: boolean;
   init(): Promise<void>;
+  /**
+   * Open the store in the background, because a purchase surface is about to
+   * be shown. Idempotent, never throws, and safe to fire and forget.
+   */
+  warm(): Promise<void>;
   removeAdsProduct(): StoreProduct | null;
-  revealPackProduct(): StoreProduct | null;
+  /** Every reveal pack, cheapest first. Empty where nothing can be bought. */
+  revealPacks(): RevealPack[];
   /** @returns true if the entitlement is now owned. */
   buyRemoveAds(): Promise<boolean>;
   /** @returns true if the reveals actually landed. */
-  buyRevealPack(): Promise<boolean>;
+  buyRevealPack(id: string): Promise<boolean>;
   /** @returns true/false when authoritative, null when the store did not answer. */
   restore(): Promise<boolean | null>;
 }
 
 const PRODUCT_ID = monetization.products.removeAds;
-const PACK_ID = monetization.products.revealPack;
+const PACKS = monetization.products.revealPacks;
+
+/**
+ * What a pack row says before App Store Connect has answered. Derived from the
+ * count rather than written out, because a hardcoded "20 reveals" outlived the
+ * twenty-reveal pack by exactly one commit.
+ */
+const packTitle = (count: number): string => `${count} reveals`;
+
+const packFor = (id: string): { id: string; count: number } | undefined =>
+  PACKS.find((p) => p.id === id);
 
 class StoreKitIapService implements IapService {
   private ready = false;
   private product: StoreProduct | null = null;
-  private packProduct: StoreProduct | null = null;
+  private packProducts = new Map<string, StoreProduct>();
 
   /*
    * Offered on device WITHOUT having contacted the store yet — see `init`.
@@ -67,6 +98,27 @@ class StoreKitIapService implements IapService {
    */
   async init(): Promise<void> {
     /* no-op */
+  }
+
+  /**
+   * Connect early, because a price nobody has fetched is a price nobody sees.
+   *
+   * `connect()` is the ONLY thing that ever learns what a product costs, and it
+   * used to be reachable exclusively from `buyRevealPack` / `buyRemoveAds` /
+   * `restore` — from inside the purchase itself. So the first time a player
+   * opened the out-of-reveals sheet the store had never been contacted, and the
+   * pack row rendered its priceless fallback: a button reading "20 reveals"
+   * with no price at all, which is what the sheet showed on device. The price
+   * could only appear on a SECOND visit, after a purchase attempt had already
+   * happened — by which point it is far too late to inform the decision.
+   *
+   * Called when a purchase surface opens rather than at launch, which is the
+   * distinction the deferral in `connect` is actually about: what must not
+   * happen is StoreKit work before the player has touched anything.
+   */
+  async warm(): Promise<void> {
+    if (!this.available) return;
+    await this.connect();
   }
 
   /**
@@ -96,7 +148,11 @@ class StoreKitIapService implements IapService {
 
       store.register([
         { id: PRODUCT_ID, type: ProductType.NON_CONSUMABLE, platform: Platform.APPLE_APPSTORE },
-        { id: PACK_ID, type: ProductType.CONSUMABLE, platform: Platform.APPLE_APPSTORE },
+        ...PACKS.map((p) => ({
+          id: p.id,
+          type: ProductType.CONSUMABLE,
+          platform: Platform.APPLE_APPSTORE,
+        })),
       ]);
 
       /*
@@ -115,8 +171,14 @@ class StoreKitIapService implements IapService {
       store
         .when()
         .approved((t) => {
-          if (t.products.some((p) => p.id === PACK_ID)) {
-            Progress.grantReveals(monetization.products.revealPackCount);
+          /*
+           * Granted by the id that was actually bought, never by a single
+           * hardcoded count. With more than one rung on the ladder, paying for
+           * 25 and receiving 10 is the failure this shape rules out.
+           */
+          for (const p of t.products) {
+            const pack = packFor(p.id);
+            if (pack) Progress.grantReveals(pack.count);
           }
           if (t.products.some((p) => p.id === PRODUCT_ID)) {
             this.grant();
@@ -154,18 +216,21 @@ class StoreKitIapService implements IapService {
           // The LOCALISED price the player will actually be charged, never a
           // hardcoded "$0.99" that is wrong in every other storefront.
           priceString: offer?.pricingPhases?.[0]?.price ?? '',
+          priceMicros: offer?.pricingPhases?.[0]?.priceMicros ?? 0,
         };
       }
 
-      const pack = store.get(PACK_ID, Platform.APPLE_APPSTORE);
-      if (pack) {
+      for (const rung of PACKS) {
+        const pack = store.get(rung.id, Platform.APPLE_APPSTORE);
+        if (!pack) continue;
         const offer = pack.getOffer();
-        this.packProduct = {
-          id: PACK_ID,
-          title: pack.title || '20 reveals',
-          description: pack.description || 'A stash of twenty folded-wall reveals.',
+        this.packProducts.set(rung.id, {
+          id: rung.id,
+          title: pack.title || packTitle(rung.count),
+          description: pack.description || `A stash of ${rung.count} folded-wall reveals.`,
           priceString: offer?.pricingPhases?.[0]?.price ?? '',
-        };
+          priceMicros: offer?.pricingPhases?.[0]?.priceMicros ?? 0,
+        });
       }
 
       // Already bought — on another device, or before a reinstall.
@@ -184,21 +249,39 @@ class StoreKitIapService implements IapService {
   removeAdsProduct(): StoreProduct | null {
     if (!this.available) return null;
     // Before the first connect the price is unknown; the row still renders.
-    return this.product ?? { id: PRODUCT_ID, title: 'Remove ads', description: '', priceString: '' };
-  }
-
-  revealPackProduct(): StoreProduct | null {
-    if (!this.available) return null;
     return (
-      this.packProduct ?? { id: PACK_ID, title: '20 reveals', description: '', priceString: '' }
+      this.product ?? {
+        id: PRODUCT_ID,
+        title: 'Remove ads',
+        description: '',
+        priceString: '',
+        priceMicros: 0,
+      }
     );
   }
 
-  async buyRevealPack(): Promise<boolean> {
+  revealPacks(): RevealPack[] {
+    if (!this.available) return [];
+    // Before the first connect the prices are unknown; the rows still render,
+    // and `warm()` fills them in — see the comment on it.
+    return PACKS.map((rung) => ({
+      count: rung.count,
+      ...(this.packProducts.get(rung.id) ?? {
+        id: rung.id,
+        title: packTitle(rung.count),
+        description: '',
+        priceString: '',
+        priceMicros: 0,
+      }),
+    }));
+  }
+
+  async buyRevealPack(id: string): Promise<boolean> {
+    if (!packFor(id)) return false;
     if (!(await this.connect())) return false;
     try {
       const { store, Platform } = CdvPurchase;
-      const offer = store.get(PACK_ID, Platform.APPLE_APPSTORE)?.getOffer();
+      const offer = store.get(id, Platform.APPLE_APPSTORE)?.getOffer();
       if (!offer) return false;
 
       const before = Progress.data.reveals;

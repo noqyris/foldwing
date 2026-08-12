@@ -54,6 +54,15 @@ export class AdsService {
   private interstitialsThisSession = 0;
   private inFlight = false;
 
+  constructor() {
+    /*
+     * Bound here rather than in `init()` on purpose: what counts as a session
+     * is not the ad SDK's business, and it has to keep working on the paths
+     * where init never runs or fails outright.
+     */
+    this.watchForNewSession();
+  }
+
   setAdsRemoved(v: boolean): void {
     this.adsRemoved = v;
     if (v) void this.hideBanner();
@@ -163,9 +172,49 @@ export class AdsService {
     if (this.interstitialsThisSession >= a.maxInterstitialsPerSession) return false;
 
     const now = Date.now();
-    if ((now - this.sessionStartedAt) / 1000 < a.sessionWarmupSeconds) return false;
+    const sessionSeconds = (now - this.sessionStartedAt) / 1000;
+    if (sessionSeconds < a.sessionWarmupSeconds) return false;
     if (now < this.mutedUntil) return false;
-    return (now - this.lastInterstitialAt) / 1000 >= a.minSecondsBetweenInterstitials;
+    return (now - this.lastInterstitialAt) / 1000 >= this.gapSeconds(sessionSeconds);
+  }
+
+  /**
+   * How long the current stretch of the session makes us wait between ads.
+   *
+   * One number cannot serve both ends of a session. Early on, frequency is the
+   * strongest predictor of someone closing the app for good; half an hour in,
+   * the same interval is leaving the most engaged players unmonetised. So the
+   * floor starts generous and tightens once the sitting is clearly a long one.
+   */
+  private gapSeconds(sessionSeconds: number): number {
+    const a = monetization.ads;
+    return sessionSeconds >= a.longSessionAfterSeconds
+      ? a.lateSecondsBetweenInterstitials
+      : a.minSecondsBetweenInterstitials;
+  }
+
+  /**
+   * Start a fresh session when the app comes back after a real absence.
+   *
+   * Bound to visibilitychange rather than a Capacitor lifecycle plugin because
+   * the webview already reports it, it needs no new dependency, and it is the
+   * same signal the menu uses to notice the date rolling over.
+   */
+  private watchForNewSession(): void {
+    if (typeof document === 'undefined') return;
+    let hiddenAt = 0;
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        hiddenAt = Date.now();
+        return;
+      }
+      const away = (Date.now() - hiddenAt) / 1000;
+      if (hiddenAt === 0 || away < monetization.ads.newSessionAfterAwaySeconds) return;
+      this.sessionStartedAt = Date.now();
+      this.interstitialsThisSession = 0;
+      // `lastInterstitialAt` deliberately survives: it is a floor on real
+      // elapsed time, and time spent away counts toward it just the same.
+    });
   }
 
   /**
