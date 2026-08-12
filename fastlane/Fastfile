@@ -89,17 +89,41 @@ platform :ios do
     # Relative to fastlane/, not to the project root: Xcodeproj resolves against
     # Ruby's cwd, unlike the fastlane actions around it, which resolve against
     # the root. Mixing the two conventions is a one-line, hard-to-spot break.
+    #
+    # MARKETING_VERSION comes from App Store Connect for the same reason.
+    #
+    # `CFBundleShortVersionString` must equal the store version the build is
+    # submitted under. Build 36 was archived while the pbxproj still said 1.1
+    # and submitted as 1.2, and App Store Connect answered INVALID_BINARY —
+    # after the upload, after the review submission, with no warning at archive
+    # time. Reading the number from the same place the submission reads it is
+    # the only version of this that cannot drift.
+    store_version = begin
+      require "spaceship"
+      # A real Spaceship token, NOT the hash `app_store_connect_api_key`
+      # returns — assigning that silently breaks every call that follows, which
+      # is how the first attempt reported "(unchanged)" and shipped 1.1 again.
+      Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+        key_id: ENV.fetch("ASC_KEY_ID"),
+        issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+        filepath: File.expand_path(ENV.fetch("ASC_KEY_PATH"))
+      )
+      app = Spaceship::ConnectAPI::App.find(APP_ID)
+      edit = app.get_edit_app_store_version
+      UI.user_error!("no editable App Store version to take a number from") unless edit
+      edit.version_string
+    end
+
     project = Xcodeproj::Project.open("../ios/App/App.xcodeproj")
-    project.build_configurations.each do |c|
+    apply = lambda do |c|
       c.build_settings["CURRENT_PROJECT_VERSION"] = next_build.to_s
+      c.build_settings["MARKETING_VERSION"] = store_version if store_version
     end
-    project.targets.each do |t|
-      t.build_configurations.each do |c|
-        c.build_settings["CURRENT_PROJECT_VERSION"] = next_build.to_s
-      end
-    end
+    project.build_configurations.each { |c| apply.call(c) }
+    project.targets.each { |t| t.build_configurations.each { |c| apply.call(c) } }
     project.save
     UI.message("build number -> #{next_build}")
+    UI.message("marketing version -> #{store_version || '(unchanged)'}")
 
     # Fetch (or create) the App Store profile through the ASC API, then sign
     # MANUALLY against it.
@@ -189,19 +213,58 @@ platform :ios do
   # accident is the only reason a test-ads build was not sent to Apple.
   #
   # `Build#add_beta_groups` is the plain distribution call and touches no review
-  # queue, so distribution runs through the account-wide tool instead:
-  #   asc-tf-groups assign --app com.noqyris.foldwing
+  # queue, so distribution goes through that and never through pilot.
   #
-  # Without it the build sits at processing=VALID, internal=READY_FOR_BETA_TESTING
-  # and never reaches a phone — which is what happened to builds 19 through 23.
+  # Without it the build sits at processing=VALID,
+  # internal=READY_FOR_BETA_TESTING and never reaches a phone. That happened to
+  # builds 19 through 23, and then AGAIN to builds 36 through 41, because the
+  # step was left as a printed reminder to run `asc-tf-groups assign` by hand
+  # and nobody ran it. A reminder is not automation: six builds were uploaded,
+  # submitted and argued about while the last thing anyone could actually
+  # install was build 35. So it happens here, in the lane, every time.
   def upload_and_distribute
     upload_to_testflight(
       api_key: asc_key,
       skip_waiting_for_build_processing: true,
       distribute_external: false
     )
-    UI.important("Uploaded. Now run:  asc-tf-groups assign --app #{APP_ID}")
-    UI.important("Until then it is VALID but NOT installable.")
+    distribute_internally
+  end
+
+  # Wait for the build Apple is still processing, then hand it to the internal
+  # group. Uploading returns long before the build is installable, which is why
+  # this polls rather than assuming.
+  def distribute_internally
+    require "spaceship"
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      filepath: File.expand_path(ENV.fetch("ASC_KEY_PATH"))
+    )
+    app = Spaceship::ConnectAPI::App.find(APP_ID)
+    groups = app.get_beta_groups.select(&:is_internal_group)
+    if groups.empty?
+      UI.important("No internal group on this app — nothing to distribute to.")
+      return
+    end
+
+    build = nil
+    20.times do
+      newest = app.get_builds(sort: "-version").first
+      if newest && newest.processing_state == "VALID"
+        build = newest
+        break
+      end
+      UI.message("build #{newest&.version} is #{newest&.processing_state || 'not listed'}; waiting")
+      sleep(45)
+    end
+    unless build
+      UI.important("Still processing after 15 minutes. Finish with: asc-tf-groups assign --app #{APP_ID}")
+      return
+    end
+
+    build.add_beta_groups(beta_groups: groups)
+    UI.success("build #{build.version} handed to #{groups.map(&:name).join(', ')} — installable now")
   end
 
   desc "Re-upload the ipa already in build/ without rebuilding"

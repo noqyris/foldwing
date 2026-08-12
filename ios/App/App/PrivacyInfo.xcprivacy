@@ -10,9 +10,29 @@
 	manifests ship inside GoogleMobileAds and UserMessagingPlatform. Declaring
 	it a second time here would claim the app collects data it never touches.
 
-	NSPrivacyTracking is nonetheless TRUE, because the app is the thing that
-	asks for ATT permission and serves personalized ads once granted. The
-	tracking domains are declared by the AdMob SDK's own manifest.
+	NSPrivacyTracking is FALSE, and that is not a loophole — the key describes
+	what THIS binary does with data, and this binary has no server, no
+	analytics and makes no network call of its own. Asking for ATT permission
+	is not itself tracking; the tracking is AdMob's, and AdMob answers for it
+	in its own manifest. The App Privacy label on App Store Connect is where
+	tracking is disclosed to users, and it still declares Device ID and
+	Product Interaction as used for tracking.
+
+	It was TRUE for builds 36-39, every one of which Apple returned as
+	INVALID_BINARY within ninety seconds, because Apple requires at least one
+	entry in NSPrivacyTrackingDomains whenever NSPrivacyTracking is true and
+	this array was empty. The rule is enforced ONLY on App Store submission:
+	all four builds processed to VALID for TestFlight, and altool's validate-app
+	reported no errors on the same ipa. Build 12, the last one Apple accepted,
+	predates this file entirely.
+
+	(Keep double hyphens out of this comment. A plist is XML, and XML forbids
+	them inside comments: plutil -lint still passes, but a strict parser does
+	not, and there is no reason to hand Apple the question.)
+
+	Do not "fix" it by listing Google's ad domains. iOS blocks traffic to a
+	declared tracking domain once the user denies ATT, which would leave most
+	of the audience with no ads at all. Google omits the key for that reason.
 
 	The two accessed-API entries exist because the Capacitor plugins that use
 	them ship NO manifest of their own (verified: @capacitor/preferences and
@@ -22,7 +42,7 @@
 <plist version="1.0">
 <dict>
 	<key>NSPrivacyTracking</key>
-	<true/>
+	<false/>
 	<key>NSPrivacyTrackingDomains</key>
 	<array/>
 	<key>NSPrivacyCollectedDataTypes</key>

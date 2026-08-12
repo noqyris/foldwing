@@ -32,3 +32,6 @@ dist-daily/
 
 # scratch audit scripts
 scripts/_audit_*.ts
+
+# Screenshot intermediates — regenerate with scripts/screenshots/capture.mjs
+store/screenshots/raw/

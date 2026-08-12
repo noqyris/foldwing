@@ -28,6 +28,7 @@
     "@capacitor/preferences": "^7.0.4",
     "@capacitor/share": "^7.0.4",
     "cordova-plugin-purchase": "^13.18.0",
+    "mp4-muxer": "^5.2.2",
     "phaser": "^3.85.0"
   },
   "devDependencies": {
