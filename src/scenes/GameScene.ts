@@ -37,10 +37,11 @@ import { routeArc } from '../core/LevelValidator';
 import { StrokeRecorder } from '../core/StrokeRecorder';
 import { LEVELS, levelAt } from '../data/levels';
 import type { Level } from '../data/types';
-import { monetization, packSaving } from '../config/monetization';
+import { monetization } from '../config/monetization';
 import { Ads } from '../systems/Ads';
 import { dailyLevel } from '../systems/Daily';
-import { applyEntitlement, Iap } from '../systems/Iap';
+import { Iap } from '../systems/Iap';
+import { showStoreSheet, storeOffers } from '../render/StoreSheet';
 import { APP_STORE_URL, WEB_DAILY } from '../systems/WebDaily';
 import { Audio } from '../systems/Audio';
 import { Haptics } from '../systems/Haptics';
@@ -63,7 +64,6 @@ import {
   RADIUS,
   roundRect,
   progressCard,
-  setButtonSub,
   softShadow,
   tappable,
   TAP_SLOP,
@@ -753,264 +753,32 @@ export class GameScene extends Phaser.Scene {
    * stays 'secondary' even when it is the only row: the purchase never gets
    * promoted just because the free path happens to be missing.
    */
+  /**
+   * Out of reveals: the highest-intent moment in the game.
+   *
+   * The rows themselves live in StoreSheet, shared with the menu, so the two
+   * shops cannot drift. What belongs to this scene is the framing — the title
+   * says why the card opened — and what to do afterwards.
+   */
   private showRefillSheet(): void {
     if (this.refillSheet) return;
 
-    /*
-     * Build the rows FIRST, and only rows that can actually do something.
-     *
-     * The rewarded row used to be unconditional, which put a dead primary
-     * button in front of anyone the rewarded unit is not available to — the
-     * whole web Daily build, where there is no AdMob at all. And when nothing
-     * at all can be offered, a card whose only live control is "Not now" is
-     * worse than saying the plain truth.
-     */
-    const packs = Iap.available ? Iap.revealPacks() : [];
-    const base = packs[0];
-
-    const offers: Array<{
-      text: string;
-      sub?: string;
-      variant: 'primary' | 'secondary';
-      /** Set on rows whose caption can still change — see the warm below. */
-      priced?: string;
-      press: () => void;
-    }> = [];
-
-    if (Ads.rewardedAvailable) {
-      offers.push({
-        // Say what lands. "+1" alone left the player to infer the unit from a
-        // sheet whose whole subject is reveals, next to rows that spell theirs
-        // out — the free option read as the vaguer of the two.
-        text: 'Watch an ad',
-        sub: '+1 reveal, free',
-        variant: 'primary',
-        press: () => void this.earnReveal(),
-      });
-    }
-
-    /*
-     * The ladder: count on the face, price and what it saves underneath.
-     *
-     * Two lines rather than one long caption. `30 reveals · $1.99 · save 33%`
-     * is a run-on that the eye has to parse before it can compare rows, and
-     * comparing rows is the only thing this sheet is for. Split, the counts
-     * line up down the left of the card and the value story sits quietly under
-     * each one.
-     */
-    for (const pack of packs) {
-      const saving = base ? packSaving(base, pack) : null;
-      offers.push({
-        text: `${pack.count} reveals`,
-        sub: [pack.priceString, saving === null ? '' : `save ${saving}%`]
-          .filter(Boolean)
-          .join(' · '),
-        variant: 'secondary',
-        priced: pack.id,
-        press: () =>
-          void (async () => {
-            await Iap.buyRevealPack(pack.id);
-            this.refreshHud();
-          })(),
-      });
-    }
-
-    /*
-     * Remove Ads is the LAST rung, not a separate product on another screen.
-     *
-     * The ladder reads 10, 20, 30, then reveals that never run out — each rung
-     * better value per reveal than the one above it, ending somewhere no pack
-     * can reach. That makes the permanent unlock the obvious end of the row
-     * rather than something the player has to go and find, and it is the
-     * highest-value conversion in the game. This is also the one moment it
-     * answers a question the player is actually asking: they are out of
-     * reveals.
-     *
-     * Named "Remove ads", the SAME name it has on the menu and — this is the
-     * part that decides it — the same name Apple prints in the purchase
-     * confirmation. It read "Unlimited reveals" here for one build, which is a
-     * better headline on a sheet about reveals and was still wrong: one product
-     * wearing two names at one price looks like two products, and the player
-     * finds out which it was in the system dialog, at the moment they pay. What
-     * it gives goes on the second line, where there is room to say all of it.
-     *
-     * Owners never see it: unlimited reveals means `spendReveal` always
-     * succeeds and this sheet never opens.
-     */
-    const removeAds = Iap.available ? Iap.removeAdsProduct() : null;
-    if (removeAds && !Progress.data.adsRemoved) {
-      offers.push({
-        text: 'Remove ads',
-        sub: [removeAds.priceString, 'unlimited reveals, no ads'].filter(Boolean).join(' · '),
-        variant: 'secondary',
-        priced: removeAds.id,
-        press: () =>
-          void (async () => {
-            if (await Iap.buyRemoveAds()) applyEntitlement(true);
-            this.refreshHud();
-          })(),
-      });
-    }
-
+    const hooks = {
+      onChange: () => this.refreshHud(),
+      onNotice: (m: string) => this.flashHint(m),
+    };
+    const offers = storeOffers(hooks);
     if (offers.length === 0) {
       this.flashHint('out of reveals — one more lands tomorrow');
       return;
     }
 
-    const t = theme();
-    const sheet = this.add.container(0, 0).setDepth(90);
-
-    const dim = this.add
-      .rectangle(BASE_WIDTH / 2, BASE_HEIGHT / 2, BASE_WIDTH, BASE_HEIGHT, t.ink, 0.22)
-      .setInteractive();
-    dim.on(Phaser.Input.Events.GAMEOBJECT_POINTER_UP, () => this.closeRefillSheet());
-    sheet.add(dim);
-
-    /*
-     * Laid out from a running cursor rather than a formula per case.
-     *
-     * The card grew from two rows to five when the packs became a ladder, and
-     * every row now carries a second line. A single arithmetic expression for
-     * the height stopped being checkable at that point — the menu stack learned
-     * the same lesson when a hand-placed row got drawn off the bottom of the
-     * canvas. Measure the rows, then draw the card around them.
-     */
-    const cw = pt(292);
-    const ROW = pt(50);
-    const GAP = pt(9);
-    const TITLE_TO_ROWS = pt(30);
-    const ROWS_TO_TAIL = pt(16);
-    const TAIL = pt(30);
-    const PAD_TOP = pt(26);
-    const PAD_BOTTOM = pt(20);
-
-    const rowsHeight = offers.length * ROW + (offers.length - 1) * GAP;
-    const ch =
-      PAD_TOP + pt(20) + TITLE_TO_ROWS + rowsHeight + ROWS_TO_TAIL + TAIL + PAD_BOTTOM;
-    const cy = BASE_HEIGHT / 2;
-    const top = cy - ch / 2;
-
-    const card = this.add.graphics();
-    softShadow(card, BASE_WIDTH / 2 - cw / 2, top, cw, ch, RADIUS.md, 0.8);
-    card.fillStyle(t.paper, 1);
-    roundRect(card, BASE_WIDTH / 2 - cw / 2, top, cw, ch, RADIUS.md);
-    sheet.add(card);
-
-    sheet.add(
-      label(this, BASE_WIDTH / 2, top + PAD_TOP + pt(10), 'Out of reveals', {
-        size: TYPE.body,
-        font: FONT.display,
-        alpha: 0.8,
-      }).setOrigin(0.5)
-    );
-
-    const pricedRows = new Map<string, Phaser.GameObjects.Container>();
-    let rowY = top + PAD_TOP + pt(20) + TITLE_TO_ROWS + ROW / 2;
-    for (const offer of offers) {
-      const row = button(this, BASE_WIDTH / 2, rowY, offer.text, {
-        width: cw - pt(30),
-        height: ROW,
-        variant: offer.variant,
-        size: TYPE.label,
-        sub: offer.sub || undefined,
-        onPress: () => {
-          this.closeRefillSheet();
-          offer.press();
-        },
-      });
-      if (offer.priced) pricedRows.set(offer.priced, row);
-      sheet.add(row);
-      rowY += ROW + GAP;
-    }
-
-    rowY += ROWS_TO_TAIL - GAP;
-    sheet.add(
-      button(this, BASE_WIDTH / 2, rowY, 'Not now', {
-        width: cw - pt(30),
-        height: TAIL,
-        variant: 'ghost',
-        size: TYPE.label,
-        onPress: () => this.closeRefillSheet(),
-      })
-    );
-
-    this.refillSheet = sheet;
-
-    /*
-     * Fill the price in if the store has not answered yet.
-     *
-     * `Iap.warm()` is fired from create(), so by the time anyone has spent two
-     * reveals the price is normally already known and this does nothing. It
-     * covers the one case that is not: a player who empties the stash within a
-     * second or two of the level opening, on a slow connection.
-     */
-    /*
-     * Fill the prices in if the store has not answered yet.
-     *
-     * `Iap.warm()` is fired from create(), so by the time anyone has spent two
-     * reveals the prices are normally already known and this does nothing. It
-     * covers the one case that is not: a player who empties the stash within a
-     * second or two of the level opening, on a slow connection.
-     *
-     * Rebuilt from the same expressions the rows were built from, so a caption
-     * that changes here cannot drift from one that did not.
-     */
-    if (offers.some((o) => o.priced && !o.sub)) {
-      void (async () => {
-        await Iap.warm();
-        if (this.refillSheet !== sheet) return; // they closed it meanwhile
-
-        const fresh = Iap.revealPacks();
-        const freshBase = fresh[0];
-        for (const pack of fresh) {
-          if (!pack.priceString) continue;
-          const saving = freshBase ? packSaving(freshBase, pack) : null;
-          setButtonSub(
-            pricedRows.get(pack.id) ?? null,
-            [pack.priceString, saving === null ? '' : `save ${saving}%`]
-              .filter(Boolean)
-              .join(' · ')
-          );
-        }
-
-        const unlock = Iap.removeAdsProduct();
-        if (unlock?.priceString) {
-          setButtonSub(
-            pricedRows.get(unlock.id) ?? null,
-            `${unlock.priceString} · unlimited reveals, no ads`
-          );
-        }
-      })();
-    }
-  }
-
-  /**
-   * The rewarded refill. The reveal is granted ONLY when the ad was actually
-   * watched to the reward.
-   *
-   * This used to grant on anything that was not 'declined', which meant
-   * 'unavailable' paid out too — and 'unavailable' covers no-fill, offline,
-   * and every non-native build. On the web Daily that made this button an
-   * infinite reveal dispenser that never showed an ad: the limit was not
-   * generous, it was switched off. Reveals are the game's one currency, so
-   * the payout has to cost what it claims to cost.
-   *
-   * The instinct behind the old code is still right — a control that visibly
-   * does nothing reads as broken — so a missing ad now SAYS it is missing
-   * rather than quietly paying. (`doSkip` keeps granting on 'unavailable' on
-   * purpose: a skip spends no currency, so letting it through costs nothing.)
-   */
-  private async earnReveal(): Promise<void> {
-    const result = await Ads.showRewarded('reveal');
-    if (result === 'earned') {
-      Progress.grantReveals(monetization.reveals.grantedPerRewarded);
-      this.refreshHud();
-      return;
-    }
-    // 'declined' means they closed the ad early and know why nothing arrived.
-    if (result === 'unavailable') {
-      this.flashHint('no ad ready just now — try again in a moment');
-    }
+    this.refillSheet = showStoreSheet(this, {
+      title: 'Out of reveals',
+      offers,
+      onClose: () => this.closeRefillSheet(),
+      stillOpen: (sheet) => this.refillSheet === sheet,
+    });
   }
 
   private closeRefillSheet(): void {

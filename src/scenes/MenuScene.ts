@@ -14,6 +14,7 @@ import { Audio } from '../systems/Audio';
 import { todayISO } from '../systems/Daily';
 import { Haptics } from '../systems/Haptics';
 import { applyEntitlement, Iap } from '../systems/Iap';
+import { showStoreSheet, storeOffers } from '../render/StoreSheet';
 import { Progress, type SaveData } from '../systems/Progress';
 import { Rate } from '../systems/Rate';
 import { BASE_HEIGHT, BASE_WIDTH, METRICS, ms, pt, setMotionScale, theme } from '../render/Theme';
@@ -34,6 +35,7 @@ import {
 
 export class MenuScene extends Phaser.Scene {
   private settingsSheet: Phaser.GameObjects.Container | null = null;
+  private storeSheet: Phaser.GameObjects.Container | null = null;
   /** A store round-trip is in flight; a second tap must not place a second order. */
   private busy = false;
   /** The tagline, which doubles as the menu's one status line — see `flash`. */
@@ -207,28 +209,32 @@ export class MenuScene extends Phaser.Scene {
     }
 
     if (selling) {
-      const product = Iap.removeAdsProduct();
-      const price = product?.priceString ? ` · ${product.priceString}` : '';
       entering.push(
         /*
-         * The menu says what the purchase GIVES, not only what it removes.
+         * One row, and it is a DOOR rather than a product.
          *
-         * "Remove ads · $2.99" on its own left the unlimited reveals — half of
-         * what is being sold, and the half the out-of-reveals sheet is about —
-         * invisible from the one screen a player browses. Measured at 494px in
-         * a 638px column, so it fits on the line rather than needing a second
-         * one the stack has no room for.
+         * It used to be the Remove Ads purchase itself, which meant the menu
+         * could only ever offer the single most expensive thing in the game
+         * with no ladder around it — the packs existed but were reachable only
+         * by running out of reveals mid-fold. The row now opens the same store
+         * that moment opens, so everything is buyable from the one screen a
+         * player actually browses.
          *
-         * The name stays "Remove ads" in both places and in App Store Connect:
-         * one product under two names at one price reads as two products, and
-         * the player would find out which at the system payment dialog.
+         * It stays ONE row on purpose. The stack's geometry is derived from its
+         * row count and already runs to within a few pixels of the banner line;
+         * a sixth row is what drew "Restore purchases" half off the canvas
+         * once. A door costs the same as the product it replaced.
+         *
+         * The caption names what is inside rather than saying only "Store",
+         * because "Remove ads" is the rung most people are looking for and the
+         * name has to match the one Apple prints in the payment dialog.
          */
-        button(this, cx, place(pt(40)), `Remove ads · unlimited reveals${price}`, {
+        button(this, cx, place(pt(40)), 'Store · reveals & Remove ads', {
           width: COLUMN,
           variant: 'secondary',
           size: TYPE.body,
           height: pt(40),
-          onPress: () => void this.purchase(),
+          onPress: () => this.openStore(),
         })
       );
       entering.push(
@@ -491,23 +497,44 @@ export class MenuScene extends Phaser.Scene {
     this.scene.start('Game', { levelIndex: index });
   }
 
-  private async purchase(): Promise<void> {
-    if (this.busy) return;
-    this.busy = true;
+  /**
+   * The store, opened from the menu.
+   *
+   * Same rows as the out-of-reveals card — see StoreSheet — so the two cannot
+   * drift. What differs is only the title: nothing has gone wrong here, the
+   * player came looking.
+   *
+   * A purchase restarts the scene rather than patching the stack in place. The
+   * entitlement changes which rows the menu HAS (the reveal chip returns, the
+   * store row goes), and the stack's geometry is derived from that row count,
+   * so recomputing it is the only version that cannot drift.
+   */
+  private openStore(): void {
+    if (this.storeSheet || this.settingsSheet) return;
     Haptics.tap();
-    try {
-      // applyEntitlement is the choke point: it persists the entitlement AND
-      // tells the ad layer, so neither can be forgotten here.
-      const owned = await Iap.buyRemoveAds();
-      if (!owned) {
-        this.flash("the purchase didn't go through");
-        return;
-      }
-      applyEntitlement(true);
-      this.scene.restart();
-    } finally {
-      this.busy = false;
+
+    const hooks = {
+      onChange: () => {
+        if (this.scene.isActive()) this.scene.restart();
+      },
+      onNotice: (m: string) => this.flash(m),
+    };
+    const sheet = showStoreSheet(this, {
+      title: 'Store',
+      offers: storeOffers(hooks),
+      onClose: () => this.closeStore(),
+      stillOpen: (s) => this.storeSheet === s,
+    });
+    if (!sheet) {
+      this.flash('nothing to buy just now');
+      return;
     }
+    this.storeSheet = sheet;
+  }
+
+  private closeStore(): void {
+    this.storeSheet?.destroy(true);
+    this.storeSheet = null;
   }
 
   private async restore(): Promise<void> {
