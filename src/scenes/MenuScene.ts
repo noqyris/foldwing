@@ -11,6 +11,7 @@ import Phaser from 'phaser';
 import { LEVELS } from '../data/levels';
 import { Ads } from '../systems/Ads';
 import { Audio } from '../systems/Audio';
+import { Music } from '../systems/Music';
 import { todayISO } from '../systems/Daily';
 import { Haptics } from '../systems/Haptics';
 import { applyEntitlement, Iap } from '../systems/Iap';
@@ -304,8 +305,15 @@ export class MenuScene extends Phaser.Scene {
     const cx = BASE_WIDTH / 2;
     const w = COLUMN;
     const rowH = pt(46);
-    // Three toggles, then the rating row, then the capability line.
-    const h = pt(58) + rowH * 4 + pt(30);
+    /*
+     * Derived from the row count, not written as a number.
+     *
+     * The toggles went from three to four when music arrived, and a hand-typed
+     * height is how the menu stack once drew "Restore purchases" half off the
+     * canvas. TOGGLES + 1 is the rating row; pt(30) is the capability line.
+     */
+    const TOGGLES = 4;
+    const h = pt(58) + rowH * (TOGGLES + 1) + pt(30);
 
     const sheet = this.add.container(cx, BASE_HEIGHT / 2).setDepth(60);
     this.settingsSheet = sheet;
@@ -348,7 +356,9 @@ export class MenuScene extends Phaser.Scene {
     }
 
     const rows: [string, keyof SaveData, (v: boolean) => void][] = [
+      // Sound and Music are separate switches on purpose — see SaveData.music.
       ['Sound', 'sound', (v) => Audio.setEnabled(v)],
+      ['Music', 'music', (v) => Music.setEnabled(v)],
       ['Haptics', 'haptics', (v) => Haptics.setEnabled(v)],
       ['Reduced motion', 'reducedMotion', (v) => setMotionScale(v)],
     ];

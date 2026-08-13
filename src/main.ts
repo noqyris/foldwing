@@ -8,6 +8,7 @@ import { BASE_HEIGHT, BASE_WIDTH, theme } from './render/Theme';
 import { renderShareCard } from './render/ShareCard';
 import { playIntro } from './render/Intro';
 import { Ads } from './systems/Ads';
+import { Audio } from './systems/Audio';
 
 /*
  * Start the opening film immediately, and do NOT await it. The game is built
@@ -24,6 +25,16 @@ void (async () => {
   await playIntro();
   void Ads.releaseBanner();
 })();
+
+/*
+ * The first touch anywhere opens the audio context.
+ *
+ * iOS refuses to start audio outside a real user gesture, and it used to be
+ * unlocked only by drawing — so the music, which is meant to be there from the
+ * menu, could not begin until the player had already entered a level. Any
+ * gesture will do, including the one that skips the opening film.
+ */
+document.addEventListener('pointerdown', () => Audio.unlock(), { once: true, capture: true });
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,

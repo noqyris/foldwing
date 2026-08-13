@@ -141,9 +141,47 @@ export function scheduleChime(ctx: BaseAudioContext, out: AudioNode, at: number)
   });
 }
 
+/**
+ * The level is beaten: a rising flourish, and a taller one for a medal.
+ *
+ * The old win sound was `scheduleChime` — three soft notes, deliberately "under
+ * the figure rather than over it". That is the right instinct for the moment
+ * the ink closes, and too quiet for the only thing in the game that says WELL
+ * DONE. Casual puzzle games all escalate here, pitch and density rising with
+ * the size of the achievement, because a reward that sounds the same whether
+ * you scraped through or beat the par line teaches the player nothing.
+ *
+ * So: a run up the same pentatonic the level itself was playing, which makes it
+ * read as the phrase the player was building finally arriving somewhere. A
+ * medal adds two more notes and an octave doubling — audibly bigger, without
+ * being a different sound.
+ */
+export function scheduleCelebration(
+  ctx: BaseAudioContext,
+  out: AudioNode,
+  at: number,
+  medal: boolean
+): void {
+  const steps = medal ? [5, 7, 9, 11, 12, 14] : [5, 7, 9, 11];
+  steps.forEach((step, i) => {
+    const t = at + i * 0.075;
+    const hz = noteHz(step);
+    scheduleTone(ctx, out, t, hz, 0.7, 0.13, 'triangle');
+    scheduleTone(ctx, out, t, hz * 2, 0.45, 0.04, 'sine');
+  });
+
+  // A medal gets a low fifth under the run — the weight that makes it land as
+  // an event rather than a longer version of the same jingle.
+  if (medal) {
+    scheduleTone(ctx, out, at, ROOT_HZ / 2, 1.6, 0.09, 'sine');
+    scheduleTone(ctx, out, at, (ROOT_HZ / 2) * Math.pow(2, 7 / 12), 1.6, 0.07, 'sine');
+  }
+}
+
 class AudioService {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
+  private music: GainNode | null = null;
   private enabled = true;
   private step = 0;
 
@@ -159,9 +197,13 @@ class AudioService {
    * Create or resume the context. Must be called from inside a real user
    * gesture — iOS refuses to start audio any other way, and a context created
    * at boot arrives permanently suspended.
+   *
+   * It deliberately does NOT check `enabled`. Sound effects and music are two
+   * separate switches, and they share one context: bailing out here when
+   * effects are off left a player who wanted only music with no context to play
+   * it through, so the music switch did nothing for them.
    */
   unlock(): void {
-    if (!this.enabled) return;
     try {
       if (!this.ctx) {
         const Ctor =
@@ -202,6 +244,32 @@ class AudioService {
   chime(): void {
     if (!this.ready() || !this.ctx || !this.master) return;
     scheduleChime(this.ctx, this.master, this.ctx.currentTime);
+  }
+
+  /** The level is beaten. Taller when they took the medal with it. */
+  celebrate(medal: boolean): void {
+    if (!this.ready() || !this.ctx || !this.master) return;
+    scheduleCelebration(this.ctx, this.master, this.ctx.currentTime, medal);
+  }
+
+  /**
+   * A bus on the SHARED context for a long-running voice.
+   *
+   * The music needs somewhere to play that is not the effects master, so its
+   * level can sit under the effects without turning them down too, and so
+   * muting one leaves the other alone. Returns null until a gesture has
+   * unlocked the context — the caller is expected to ask again.
+   */
+  musicBus(): { ctx: AudioContext; out: GainNode } | null {
+    if (!this.ctx || this.ctx.state !== 'running') return null;
+    if (!this.music) {
+      this.music = this.ctx.createGain();
+      // Well under the effects master at 0.5: this plays continuously, and a
+      // bed you notice is a bed you turn off.
+      this.music.gain.value = 0.14;
+      this.music.connect(this.ctx.destination);
+    }
+    return { ctx: this.ctx, out: this.music };
   }
 
   private ready(): boolean {

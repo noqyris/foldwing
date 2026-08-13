@@ -124,6 +124,16 @@ export interface SaveData {
   foldSense: number;
   /** Player settings. Default-on, because the game is better with them. */
   sound: boolean;
+  /**
+   * The background bed, separate from `sound` on purpose.
+   *
+   * They are two different questions. Effects mark something the player did and
+   * most people want them; music plays continuously and is the first thing
+   * someone turns off on a commute or with a podcast running. Every casual
+   * puzzle game of this shape keeps them apart, and one switch for both means a
+   * player who wants a quiet bed has to lose the feedback to get it.
+   */
+  music: boolean;
   haptics: boolean;
   /**
    * Reduced motion. The game leans on tweens for the win figure and the sheets;
@@ -218,6 +228,7 @@ function freshSave(): SaveData {
     medals: [],
     foldSense: 0,
     sound: true,
+    music: true,
     haptics: true,
     reducedMotion: prefersReducedMotion(),
     capability: '',
@@ -394,6 +405,7 @@ function coerce(raw: unknown): SaveData {
     // A missing flag means a save written before settings existed, so it takes
     // the default rather than reading `undefined !== false` as "off".
     sound: r.sound !== false,
+    music: r.music !== false,
     haptics: r.haptics !== false,
     reducedMotion: typeof r.reducedMotion === 'boolean' ? r.reducedMotion : base.reducedMotion,
     capability: typeof r.capability === 'string' ? r.capability : '',

@@ -13,6 +13,7 @@
 import Phaser from 'phaser';
 import { Ads } from '../systems/Ads';
 import { Audio } from '../systems/Audio';
+import { Music } from '../systems/Music';
 import { todayISO } from '../systems/Daily';
 import { Haptics } from '../systems/Haptics';
 import { Iap } from '../systems/Iap';
@@ -53,6 +54,7 @@ export class BootScene extends Phaser.Scene {
       // sound or buzz. Both services defaulted to on and had no caller at all
       // until settings existed.
       Audio.setEnabled(save.sound);
+      Music.setEnabled(save.music);
       Haptics.setEnabled(save.haptics);
       setMotionScale(save.reducedMotion);
 

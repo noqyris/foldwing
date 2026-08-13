@@ -624,7 +624,9 @@ export class GameScene extends Phaser.Scene {
     });
 
     this.ink.presentWin(this.recorder.points, this.recorder.times);
-    Audio.chime();
+    // Escalates with the medal — see scheduleCelebration. The old soft chime
+    // sounded identical whether the line scraped through or beat the par.
+    Audio.celebrate(this.winMedal);
     this.clearSkipOffer();
     // The reveal offer has to go too. It sets no depth, so it paints over the
     // share pill's opaque backing, and it lies: tapping it reveals nothing —
@@ -1378,8 +1380,24 @@ export class GameScene extends Phaser.Scene {
   }
 
   private refreshHud(): void {
+    /*
+     * On a win the title says so, in place of the level name.
+     *
+     * The name is what the player needed while they were failing at it; the
+     * moment it is beaten they already know which one it was, and the slot is
+     * better spent saying the one thing the game never said out loud. The
+     * verdict below keeps the detail — the medal, the line — so the pair reads
+     * as praise first and score second.
+     */
     this.titleText.setText(
-      this.dailyDate ? this.level.name : `${this.levelIndex + 1}. ${this.level.name}`
+      this.phase === 'won'
+        ? 'Congratulations'
+        : this.dailyDate
+          ? this.level.name
+          : `${this.levelIndex + 1}. ${this.level.name}`
+    );
+    this.titleText.setColor(
+      this.phase === 'won' ? 'rgba(22,50,60,0.9)' : 'rgba(22,50,60,0.72)'
     );
 
     /*
