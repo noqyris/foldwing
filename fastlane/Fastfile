@@ -122,6 +122,9 @@ platform :ios do
     project.build_configurations.each { |c| apply.call(c) }
     project.targets.each { |t| t.build_configurations.each { |c| apply.call(c) } }
     project.save
+    # Hand the number to distribute_internally so it waits for THIS build
+    # rather than for whatever App Store Connect happens to list first.
+    ENV["FOLDWING_BUILD_NUMBER"] = next_build.to_s
     UI.message("build number -> #{next_build}")
     UI.message("marketing version -> #{store_version || '(unchanged)'}")
 
@@ -234,7 +237,14 @@ platform :ios do
   # Wait for the build Apple is still processing, then hand it to the internal
   # group. Uploading returns long before the build is installable, which is why
   # this polls rather than assuming.
+  #
+  # It waits for THIS build by number, not for "the newest valid one". Those are
+  # not the same thing in the minutes after an upload: App Store Connect has not
+  # listed the new build yet, so the newest it can see is the PREVIOUS one,
+  # which is already VALID. The first version of this handed build 41 to the
+  # testers and announced it had shipped build 42.
   def distribute_internally
+    expected = ENV["FOLDWING_BUILD_NUMBER"]
     require "spaceship"
     Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
       key_id: ENV.fetch("ASC_KEY_ID"),
@@ -250,16 +260,18 @@ platform :ios do
 
     build = nil
     20.times do
-      newest = app.get_builds(sort: "-version").first
-      if newest && newest.processing_state == "VALID"
-        build = newest
+      candidates = app.get_builds(sort: "-version")
+      found = expected ? candidates.find { |b| b.version == expected } : candidates.first
+      if found && found.processing_state == "VALID"
+        build = found
         break
       end
-      UI.message("build #{newest&.version} is #{newest&.processing_state || 'not listed'}; waiting")
+      UI.message("build #{expected || found&.version} is #{found&.processing_state || 'not listed yet'}; waiting")
       sleep(45)
     end
     unless build
-      UI.important("Still processing after 15 minutes. Finish with: asc-tf-groups assign --app #{APP_ID}")
+      UI.important("Build #{expected} still processing after 15 minutes.")
+      UI.important("Finish with: asc-tf-groups assign --app #{APP_ID}")
       return
     end
 
