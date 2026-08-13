@@ -21,19 +21,27 @@
  * THE ASSET. public/intro.mp4 is derived from assets/splashscreen-9-16.mp4,
  * which is the master and is kept because it cannot be reconstructed:
  *
- *   ffmpeg -i assets/splashscreen-9-16.mp4 -vf scale=1290:-2 -an \
+ *   ffmpeg -i assets/splashscreen-9-16.mp4 -vf scale=1290:-2 \
  *     -c:v libx264 -profile:v high -level 4.0 -pix_fmt yuv420p \
- *     -crf 24 -preset slow -movflags +faststart public/intro.mp4
+ *     -crf 24 -preset slow -c:a aac -b:a 96k -ac 2 \
+ *     -movflags +faststart public/intro.mp4
  *
- * The master is 2192x3824 with an audio track, which is 4.5MB of bundle for a
- * screen no phone has and a soundtrack that can never play; the shipped file
- * is 624KB. `+faststart` matters more than the size does — without it the moov
- * atom sits at the end and the first frame waits for the whole download.
+ * The master is 2192x3824, a screen no phone has, and 4.5MB of bundle; the
+ * shipped file is 689KB with its audio intact. `+faststart` matters more than
+ * the size does — without it the moov atom sits at the end and the first frame
+ * waits for the whole download.
  *
- * MUTED IS NOT A PREFERENCE. iOS refuses to autoplay video with sound without
- * a user gesture, and there is no gesture at launch, so an unmuted file would
- * simply never start. The shipped asset therefore has no audio track at all,
- * which is also most of why it is 624KB rather than 4.5MB.
+ * IT PLAYS WITH SOUND IN THE APP, AND ONLY THERE. Safari will not autoplay
+ * audio without a gesture and there is no gesture at launch — but this does not
+ * ship in Safari. Capacitor builds its WKWebView with
+ * `mediaTypesRequiringUserActionForPlayback = []`, so inside the app nothing
+ * requires one and the sting is heard as it was made. The web Daily gets the
+ * same film muted, because there the rule does apply, and a rejected `play()`
+ * is retried muted rather than costing anyone the film.
+ *
+ * The Sound switch still governs it: BootScene reads the save and calls
+ * `setIntroSound`, which lands within the first frames. A player who turned the
+ * game's sound off did not ask to be sung at on the way in.
  */
 
 /** Hard ceiling. The asset is ~5.2s; anything past this is a stuck decoder. */
@@ -54,6 +62,30 @@ const FADE_MS = 280;
  * straight to the game.
  */
 const SHIELD_MS = 320;
+
+/**
+ * The film currently on screen, so the Sound setting can reach it.
+ *
+ * The film starts before the save has been read — that is the point of it, it
+ * covers the read — so the setting arrives a moment later and mutes it then.
+ */
+let live: HTMLVideoElement | null = null;
+
+/** Whether this platform will autoplay audio at all. See the header. */
+const canAutoplaySound = (): boolean =>
+  Boolean((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } })
+    .Capacitor?.isNativePlatform?.());
+
+/**
+ * Apply the player's Sound setting to a film that is already running.
+ *
+ * Called by BootScene the instant the save resolves. Silent about a film that
+ * has already finished, which is the common case on a warm start.
+ */
+export function setIntroSound(on: boolean): void {
+  if (!live) return;
+  live.muted = !on || !canAutoplaySound();
+}
 
 /**
  * Play the opening film, then resolve.
@@ -94,16 +126,21 @@ export function playIntro(src = new URL('intro.mp4', document.baseURI).href): Pr
 
     const video = document.createElement('video');
     video.src = src;
-    video.muted = true;
-    video.defaultMuted = true;
+    // Sound in the app, silence on the web — see the header. `defaultMuted`
+    // sets the ATTRIBUTE, which is what a browser consults when it decides
+    // whether an autoplay is allowed; the property alone is checked too late.
+    const wantSound = canAutoplaySound();
+    video.muted = !wantSound;
+    video.defaultMuted = !wantSound;
+    if (!wantSound) video.setAttribute('muted', '');
     video.autoplay = true;
     video.playsInline = true;
     // `playsinline` as an ATTRIBUTE too: older WKWebView reads the attribute,
     // not the property, and without it iOS takes the video fullscreen.
     video.setAttribute('playsinline', '');
     video.setAttribute('webkit-playsinline', '');
-    video.setAttribute('muted', '');
     video.preload = 'auto';
+    live = video;
     Object.assign(video.style, {
       width: '100%',
       height: '100%',
@@ -137,6 +174,7 @@ export function playIntro(src = new URL('intro.mp4', document.baseURI).href): Pr
     const finish = (): void => {
       if (done) return;
       done = true;
+      if (live === video) live = null;
       timers.forEach(clearTimeout);
       // Stop the decoder before detaching; a playing video removed from the
       // DOM keeps its buffer alive on iOS.
@@ -183,9 +221,19 @@ export function playIntro(src = new URL('intro.mp4', document.baseURI).href): Pr
       }, HINT_AFTER_MS)
     );
 
-    // `play()` rejects when autoplay is blocked. There is nothing to recover
-    // to at launch, so treat it as "no film" rather than showing a frozen
-    // first frame the player has to work out how to dismiss.
-    void video.play().catch(finish);
+    /*
+     * `play()` rejects when autoplay is blocked.
+     *
+     * Retry MUTED before giving up: an unmuted film is the thing a browser
+     * refuses, and losing the sound is a far smaller loss than losing the
+     * opening. Only if the muted attempt fails too is there nothing to recover
+     * to, and then the overlay goes rather than leaving a frozen first frame
+     * the player has to work out how to dismiss.
+     */
+    void video.play().catch(() => {
+      video.muted = true;
+      video.setAttribute('muted', '');
+      void video.play().catch(finish);
+    });
   });
 }

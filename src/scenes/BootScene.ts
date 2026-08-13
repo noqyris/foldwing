@@ -19,6 +19,7 @@ import { Haptics } from '../systems/Haptics';
 import { Iap } from '../systems/Iap';
 import { Progress } from '../systems/Progress';
 import { WEB_DAILY } from '../systems/WebDaily';
+import { setIntroSound } from '../render/Intro';
 import { setMotionScale, theme } from '../render/Theme';
 
 export class BootScene extends Phaser.Scene {
@@ -53,6 +54,9 @@ export class BootScene extends Phaser.Scene {
       // Apply the player's settings before the first scene that could make a
       // sound or buzz. Both services defaulted to on and had no caller at all
       // until settings existed.
+      // The film is already running; hand it the Sound setting the moment we
+      // know it, so a muted player is not sung at on the way in.
+      setIntroSound(save.sound);
       Audio.setEnabled(save.sound);
       Music.setEnabled(save.music);
       Haptics.setEnabled(save.haptics);
