@@ -6,6 +6,24 @@ import { GalleryScene } from './scenes/GalleryScene';
 import { GameScene } from './scenes/GameScene';
 import { BASE_HEIGHT, BASE_WIDTH, theme } from './render/Theme';
 import { renderShareCard } from './render/ShareCard';
+import { playIntro } from './render/Intro';
+import { Ads } from './systems/Ads';
+
+/*
+ * Start the opening film immediately, and do NOT await it. The game is built
+ * behind it on the next line, so by the time the film ends the menu is already
+ * there — the five seconds are spent loading rather than instead of loading.
+ *
+ * The banner is held for the duration. It is a NATIVE view above the webview,
+ * so nothing the page draws can cover it; without the hold it slides in over
+ * the film. Scenes keep calling showBanner() as they always did — the want is
+ * remembered and honoured the moment the film clears.
+ */
+void (async () => {
+  Ads.holdBanner();
+  await playIntro();
+  void Ads.releaseBanner();
+})();
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,

@@ -541,6 +541,41 @@ describe('the banner', () => {
     await ads.showBanner();
     expect(stub.AdMob.showBanner).toHaveBeenCalledTimes(1);
   });
+
+  /*
+   * The opening film is full-bleed, but the banner is a NATIVE view above the
+   * webview: nothing the page draws can cover it, so the only way to keep it
+   * off the film is not to ask for it yet. The scenes must not have to know
+   * that — they call showBanner() whenever they like and the want is honoured
+   * when the hold lifts.
+   */
+  it('stays off the glass while the opening film holds it', async () => {
+    await ads.init();
+    ads.holdBanner();
+
+    await ads.showBanner();
+    expect(stub.AdMob.showBanner).not.toHaveBeenCalled();
+
+    await ads.releaseBanner();
+    expect(stub.AdMob.showBanner).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not conjure a banner nobody asked for when the hold lifts', async () => {
+    await ads.init();
+    ads.holdBanner();
+    await ads.releaseBanner();
+    expect(stub.AdMob.showBanner).not.toHaveBeenCalled();
+  });
+
+  /* Releasing twice must not stack a second request on top of the live one. */
+  it('shows exactly one banner however often the hold is released', async () => {
+    await ads.init();
+    ads.holdBanner();
+    await ads.showBanner();
+    await ads.releaseBanner();
+    await ads.releaseBanner();
+    expect(stub.AdMob.showBanner).toHaveBeenCalledTimes(1);
+  });
 });
 
 /*

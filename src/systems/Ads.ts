@@ -37,6 +37,8 @@ export class AdsService {
    * that always appears and one that appears only when the network is fast.
    */
   private bannerWanted = false;
+  /** Set while the opening film is on screen — see holdBanner(). */
+  private bannerHeld = false;
 
   /**
    * False whenever ATT or UMP has not given us permission to personalise.
@@ -118,6 +120,24 @@ export class AdsService {
   /* ---------------------------------------------------------------- banner */
 
   /**
+   * Keep the strip off the glass until `releaseBanner()`.
+   *
+   * The opening film is full-bleed, and a banner is a NATIVE view sitting above
+   * the webview — it does not care what the page is showing, so without this it
+   * slides in over the film. Scenes still call showBanner() whenever they like;
+   * the want is remembered and honoured the moment the hold lifts.
+   */
+  holdBanner(): void {
+    this.bannerHeld = true;
+  }
+
+  async releaseBanner(): Promise<void> {
+    if (!this.bannerHeld) return;
+    this.bannerHeld = false;
+    if (this.bannerWanted && !this.bannerShown) await this.showBanner();
+  }
+
+  /**
    * Always on, every scene. The playfield inset reserves the strip it occupies,
    * so it covers paper margin and never anything the player can touch — a
    * control under an ad is an accidental-click generator, and accidental clicks
@@ -126,6 +146,7 @@ export class AdsService {
   async showBanner(): Promise<void> {
     if (!this.enabled || this.bannerShown) return;
     this.bannerWanted = true;
+    if (this.bannerHeld) return; // replayed by releaseBanner()
     if (!this.ready) return; // replayed at the end of init()
     try {
       await AdMob.showBanner({
