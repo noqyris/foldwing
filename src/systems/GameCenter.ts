@@ -1,5 +1,5 @@
 /**
- * Game Center — the Daily Fold leaderboard, and nothing else.
+ * Game Center — the Daily Fold leaderboard and the achievements.
  *
  * The Daily Fold is the one thing in this game worth ranking: a single maze
  * generated from the date, the same one for everyone in the world, already
@@ -15,6 +15,7 @@
  * every call resolves and every failure is a `false` rather than a throw.
  */
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Progress } from './Progress';
 
 /** Matches the vendorIdentifier configured in App Store Connect. */
 export const DAILY_LEADERBOARD = 'foldwing.daily.time';
@@ -28,7 +29,60 @@ interface GameCenterPlugin {
   authenticate(): Promise<Result>;
   submitScore(o: { leaderboardID: string; score: number }): Promise<Result>;
   showLeaderboard(o: { leaderboardID: string }): Promise<Result>;
+  reportAchievement(o: { identifier: string; percent?: number }): Promise<Result>;
+  showAchievements(): Promise<Result>;
 }
+
+/**
+ * Every achievement, and the condition that earns it.
+ *
+ * Kept as DATA, and as a pure predicate over the save, for two reasons. It can
+ * be tested without a device — GameKit exists on neither the web build nor the
+ * test runner — and reporting is stateless: the game reports whatever currently
+ * holds, and GameKit is the thing that knows what was already earned. Reporting
+ * an earned achievement again is a no-op, so nothing here has to remember.
+ *
+ * The ids match the vendorIdentifiers configured in App Store Connect. A typo
+ * on either side is silent: GameKit accepts an unknown id and drops it.
+ */
+export interface Achievement {
+  readonly id: string;
+  readonly earned: (save: {
+    cleared: readonly string[];
+    medals: readonly string[];
+    daily: Readonly<Record<string, unknown>>;
+  }, run?: { deaths: number }) => boolean;
+}
+
+/** Seven ISO dates ending today, in order. */
+function last7(todayISO: string): string[] {
+  const out: string[] = [];
+  const [y, m, d] = todayISO.split('-').map(Number);
+  for (let i = 6; i >= 0; i--) {
+    const t = new Date(Date.UTC(y, m - 1, d - i));
+    out.push(t.toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+export const ACHIEVEMENTS: readonly Achievement[] = [
+  { id: 'foldwing.first', earned: (s) => s.cleared.length >= 1 },
+  { id: 'foldwing.ten', earned: (s) => s.cleared.length >= 10 },
+  { id: 'foldwing.fifty', earned: (s) => s.cleared.length >= 50 },
+  { id: 'foldwing.hundred', earned: (s) => s.cleared.length >= 100 },
+  { id: 'foldwing.medal.ten', earned: (s) => s.medals.length >= 10 },
+  { id: 'foldwing.medal.fifty', earned: (s) => s.medals.length >= 50 },
+  /*
+   * Only the run just finished can earn this, which is why it takes `run`: the
+   * save records that a level was cleared, never how cleanly, so a flawless run
+   * is knowable at exactly one moment and never again.
+   */
+  { id: 'foldwing.flawless', earned: (_s, run) => run !== undefined && run.deaths === 0 },
+  {
+    id: 'foldwing.streak.week',
+    earned: (s) => last7(new Date().toISOString().slice(0, 10)).every((d) => d in s.daily),
+  },
+];
 
 const native = registerPlugin<GameCenterPlugin>('GameCenter');
 
@@ -84,6 +138,42 @@ class GameCenterService {
         score: toCentiseconds(ms),
       });
       return r.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Report everything currently true.
+   *
+   * Deliberately not "report what just changed": the game holds no record of
+   * what has been sent, GameKit does, and re-reporting an earned achievement
+   * costs nothing. That keeps this correct across reinstalls and across a
+   * player who signs in halfway through the campaign.
+   */
+  async reportAchievements(run?: { deaths: number }): Promise<void> {
+    if (!this.available || !this.authed) return;
+    const save = {
+      cleared: Progress.data.cleared,
+      medals: Progress.data.medals,
+      daily: Progress.data.daily,
+    };
+    for (const a of ACHIEVEMENTS) {
+      if (!a.earned(save, run)) continue;
+      try {
+        await native.reportAchievement({ identifier: a.id, percent: 100 });
+      } catch {
+        /* a lost achievement is not worth a broken win screen */
+      }
+    }
+  }
+
+  /** Game Center's achievements screen. */
+  async showAchievements(): Promise<boolean> {
+    if (!this.available) return false;
+    if (!this.authed && !(await this.signIn())) return false;
+    try {
+      return (await native.showAchievements()).ok;
     } catch {
       return false;
     }

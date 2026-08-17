@@ -2,13 +2,14 @@ import Capacitor
 import GameKit
 
 /**
- * Game Center — the Daily Fold leaderboard, and nothing else.
+ * Game Center — the Daily Fold leaderboard and the achievements.
  *
  * WHY THIS IS HAND-WRITTEN. The published Capacitor plugin for Game Center is a
  * major version behind this app's Capacitor, and it bundles Google Play Games
  * alongside Apple's — a second native dependency, a second privacy manifest and
- * a second thing to keep alive, for a surface that is three GameKit calls. This
- * file is those three calls.
+ * a second thing to keep alive, for a surface this small. This file is the whole
+ * of it: sign in, post a time, report an achievement, and open Apple's own two
+ * screens.
  *
  * EVERY METHOD RESOLVES. Game Center is a nice-to-have on top of a game that
  * works offline and has no account: a player who is signed out, underage,
@@ -23,7 +24,9 @@ public class GameCenterPlugin: CAPPlugin, CAPBridgedPlugin {
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "authenticate", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "submitScore", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "showLeaderboard", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "showLeaderboard", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "reportAchievement", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "showAchievements", returnType: CAPPluginReturnPromise)
     ]
 
     /**
@@ -106,6 +109,54 @@ public class GameCenterPlugin: CAPPlugin, CAPBridgedPlugin {
                 playerScope: .global,
                 timeScope: .today
             )
+            vc.gameCenterDelegate = self
+            guard let host = self.bridge?.viewController else {
+                call.resolve(["ok": false, "reason": "no-view-controller"])
+                return
+            }
+            host.present(vc, animated: true) { call.resolve(["ok": true]) }
+        }
+    }
+}
+
+extension GameCenterPlugin {
+    /**
+     * Mark an achievement earned.
+     *
+     * Fire-and-forget by design: the game reports the same achievements every
+     * time the condition holds, and GameKit is the one that knows whether it
+     * has already been earned. Reporting an earned achievement again is a
+     * no-op, which is what lets the caller stay stateless.
+     */
+    @objc func reportAchievement(_ call: CAPPluginCall) {
+        guard GKLocalPlayer.local.isAuthenticated else {
+            call.resolve(["ok": false, "reason": "not-authenticated"])
+            return
+        }
+        guard let identifier = call.getString("identifier") else {
+            call.resolve(["ok": false, "reason": "bad-arguments"])
+            return
+        }
+
+        let achievement = GKAchievement(identifier: identifier)
+        achievement.percentComplete = call.getDouble("percent") ?? 100
+        // The banner is GameKit's own, and it is the only thing that tells the
+        // player anything happened.
+        achievement.showsCompletionBanner = true
+
+        GKAchievement.report([achievement]) { error in
+            call.resolve(["ok": error == nil, "reason": error?.localizedDescription ?? ""])
+        }
+    }
+
+    /** Game Center's achievements screen. */
+    @objc func showAchievements(_ call: CAPPluginCall) {
+        guard GKLocalPlayer.local.isAuthenticated else {
+            call.resolve(["ok": false, "reason": "not-authenticated"])
+            return
+        }
+        DispatchQueue.main.async {
+            let vc = GKGameCenterViewController(state: .achievements)
             vc.gameCenterDelegate = self
             guard let host = self.bridge?.viewController else {
                 call.resolve(["ok": false, "reason": "no-view-controller"])

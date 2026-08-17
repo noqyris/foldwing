@@ -41,6 +41,7 @@ import { monetization } from '../config/monetization';
 import { Ads } from '../systems/Ads';
 import { dailyLevel, todayISO } from '../systems/Daily';
 import { GameCenter } from '../systems/GameCenter';
+import { Nudges } from '../systems/Nudges';
 import { Iap } from '../systems/Iap';
 import { showStoreSheet, storeOffers } from '../render/StoreSheet';
 import { APP_STORE_URL, WEB_DAILY } from '../systems/WebDaily';
@@ -612,8 +613,27 @@ export class GameScene extends Phaser.Scene {
        * a time for a fold played from an older date would rank it against the
        * wrong maze.
        */
-      if (this.dailyDate === todayISO()) void GameCenter.submitDaily(elapsed);
+      if (this.dailyDate === todayISO()) {
+        void GameCenter.submitDaily(elapsed);
+        /*
+         * And ask about reminders HERE, nowhere else.
+         *
+         * They have just finished today's fold, which is the only moment in the
+         * game where "tell me when the next one is ready" is obviously worth
+         * something. Asking at launch spends the one permission prompt iOS
+         * grants before the game has given anybody a reason to say yes.
+         */
+        void Nudges.schedule();
+      }
     }
+
+    /*
+     * Achievements, reported on every win rather than tracked.
+     *
+     * `totalDeaths` is passed because a flawless run is knowable at exactly one
+     * moment: the save records that a level was cleared, never how cleanly.
+     */
+    void GameCenter.reportAchievements({ deaths: this.totalDeaths });
 
     // The winning stroke closes the run: the replay is every attempt in order,
     // and this is the one it ends on.

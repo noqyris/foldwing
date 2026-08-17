@@ -325,7 +325,9 @@ export class MenuScene extends Phaser.Scene {
      * canvas. TOGGLES + 1 is the rating row; pt(30) is the capability line.
      */
     const TOGGLES = 4;
-    const h = pt(58) + rowH * (TOGGLES + 1) + pt(30);
+    // Toggles, then Game Center where it exists, then the rating row.
+    const EXTRA = (GameCenter.available ? 1 : 0) + 1;
+    const h = pt(58) + rowH * (TOGGLES + EXTRA) + pt(30);
 
     const sheet = this.add.container(cx, BASE_HEIGHT / 2).setDepth(60);
     this.settingsSheet = sheet;
@@ -389,8 +391,36 @@ export class MenuScene extends Phaser.Scene {
      * `Rate.openStoreListing`. A deliberate tap has to do something visible,
      * and the native prompt is throttled to a few a year and may show nothing.
      */
+    /*
+     * Game Center, above the rating row.
+     *
+     * The leaderboard used to be reachable only from the Daily Fold's win
+     * screen — the moment of highest intent, and also the only one, so a player
+     * who had not finished today's fold could not find it at all. This is where
+     * someone goes looking for scores and achievements.
+     *
+     * Hidden where GameKit does not exist rather than shown dead: the web build
+     * has no Game Center, and a button that cannot work is worse than no button.
+     */
+    if (GameCenter.available) {
+      sheet.add(
+        button(this, 0, -h / 2 + pt(58) + rowH * rows.length + rowH / 2, 'Game Center', {
+          width: w - pt(40),
+          height: pt(38),
+          variant: 'secondary',
+          size: TYPE.label,
+          onPress: () => {
+            Haptics.tap();
+            void GameCenter.show().then((shown) => {
+              if (!shown) this.flash('game center is not signed in');
+            });
+          },
+        })
+      );
+    }
+
     sheet.add(
-      button(this, 0, -h / 2 + pt(58) + rowH * rows.length + rowH / 2, 'Rate this game', {
+      button(this, 0, -h / 2 + pt(58) + rowH * (rows.length + (GameCenter.available ? 1 : 0)) + rowH / 2, 'Rate this game', {
         width: w - pt(40),
         height: pt(38),
         variant: 'secondary',
