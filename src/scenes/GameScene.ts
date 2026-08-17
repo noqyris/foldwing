@@ -39,7 +39,8 @@ import { LEVELS, levelAt } from '../data/levels';
 import type { Level } from '../data/types';
 import { monetization } from '../config/monetization';
 import { Ads } from '../systems/Ads';
-import { dailyLevel } from '../systems/Daily';
+import { dailyLevel, todayISO } from '../systems/Daily';
+import { GameCenter } from '../systems/GameCenter';
 import { Iap } from '../systems/Iap';
 import { showStoreSheet, storeOffers } from '../render/StoreSheet';
 import { APP_STORE_URL, WEB_DAILY } from '../systems/WebDaily';
@@ -174,6 +175,7 @@ export class GameScene extends Phaser.Scene {
   private revealOfferPill: Phaser.GameObjects.Container | null = null;
   private refillSheet: Phaser.GameObjects.Container | null = null;
   private webDailyEnd: Phaser.GameObjects.Container | null = null;
+  private leaderboardPill: Phaser.GameObjects.Container | null = null;
 
   constructor() {
     super('Game');
@@ -601,6 +603,16 @@ export class GameScene extends Phaser.Scene {
         deaths: this.totalDeaths,
         foldSense: this.winSense,
       });
+      /*
+       * And to the world. Fire and forget: the board is a nice-to-have on top
+       * of a game with no account, so a signed-out or offline player loses the
+       * ranking and never learns that anything was attempted.
+       *
+       * Submitted for TODAY only. Game Center's board resets daily, so posting
+       * a time for a fold played from an older date would rank it against the
+       * wrong maze.
+       */
+      if (this.dailyDate === todayISO()) void GameCenter.submitDaily(elapsed);
     }
 
     // The winning stroke closes the run: the replay is every attempt in order,
@@ -854,8 +866,41 @@ export class GameScene extends Phaser.Scene {
    * The growth loop, offered at the only moment it can work: the player is
    * looking at something they just made and are pleased with.
    */
+  /**
+   * The Daily Fold's board, offered at the only moment anyone wants it: they
+   * have just finished today's maze and know their time.
+   *
+   * Only on the Daily, only where GameKit exists, and it opens Game Center's
+   * own screen rather than anything of ours — the ranking belongs to the
+   * platform, and a board we drew ourselves would be a second source of truth.
+   */
+  private showLeaderboardOffer(): void {
+    if (!this.dailyDate || !GameCenter.available) return;
+    const pill = button(this, BASE_WIDTH / 2, this.pillY(pt(96)), 'Leaderboard', {
+      width: pt(150),
+      height: pt(34),
+      variant: 'ghost',
+      size: TYPE.label,
+      onPress: () => {
+        Haptics.tap();
+        void GameCenter.show().then((shown) => {
+          if (!shown) this.flashHint('game center is not signed in');
+        });
+      },
+    });
+    pill.setDepth(60).setAlpha(0);
+    this.tweens.add({ targets: pill, alpha: 1, duration: ms(300) });
+    this.leaderboardPill = pill;
+  }
+
+  private clearLeaderboardOffer(): void {
+    this.leaderboardPill?.destroy(true);
+    this.leaderboardPill = null;
+  }
+
   private showShareOffer(delay: number): void {
     this.clearShareOffer();
+    this.showLeaderboardOffer();
 
     /*
      * TWO shares, because they are two different things to send.
@@ -933,6 +978,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private clearShareOffer(): void {
+    // The leaderboard pill lives and dies with this row. Leaving it behind is
+    // exactly how the reveal offer once survived into the next level and
+    // painted over the share pill's backing.
+    this.clearLeaderboardOffer();
     this.shareRowRect = null;
     if (!this.sharePill) return;
     this.tweens.killTweensOf(this.sharePill);

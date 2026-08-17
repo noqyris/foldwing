@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+	Entitlements for the App target.
+
+	Only Game Center, and it is here for the Daily Fold leaderboard: one maze a
+	day, the same maze for everyone in the world, which is what a recurring
+	leaderboard is for.
+
+	No portal change was needed. GAME_CENTER is already enabled on the App ID
+	(Apple turns it on by default alongside IN_APP_PURCHASE) and the App Store
+	provisioning profile already carries com.apple.developer.game-center — the
+	binary simply was not asking for it. So this file requests something the
+	signing chain has always permitted, which is why adding it does not force a
+	profile regeneration and cannot break the archive.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.developer.game-center</key>
+	<true/>
+</dict>
+</plist>

@@ -16,6 +16,7 @@ import { todayISO } from '../systems/Daily';
 import { Haptics } from '../systems/Haptics';
 import { applyEntitlement, Iap } from '../systems/Iap';
 import { showStoreSheet, storeOffers } from '../render/StoreSheet';
+import { GameCenter } from '../systems/GameCenter';
 import { Progress, type SaveData } from '../systems/Progress';
 import { Rate } from '../systems/Rate';
 import { BASE_HEIGHT, BASE_WIDTH, METRICS, ms, pt, setMotionScale, theme } from '../render/Theme';
@@ -285,6 +286,17 @@ export class MenuScene extends Phaser.Scene {
 
     // The banner lives here and on level select. Never over the playfield.
     void Ads.showBanner();
+
+    /*
+     * Sign in to Game Center here, and nowhere else.
+     *
+     * GameKit may put its own sheet on screen. On the menu that costs nothing;
+     * during a level it would land over a stroke in progress and take the
+     * attempt with it. Fire and forget — the Daily Fold board is a
+     * nice-to-have on top of a game with no account, and a player who declines
+     * loses the ranking and nothing else.
+     */
+    void GameCenter.signIn();
   }
 
   /* ------------------------------------------------------------- settings */
