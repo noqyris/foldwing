@@ -98,8 +98,23 @@ export function roundRect(
   h: number,
   radius: number
 ): void {
-  g.fillRoundedRect(x, y, w, h, Math.max(0, Math.min(radius, w / 2, h / 2)));
+  g.fillRoundedRect(x, y, w, h, clampRadius(radius, w, h));
 }
+
+/** The outline of the same shape. Same clamp, same reason. */
+export function strokeRoundRect(
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  radius: number
+): void {
+  g.strokeRoundedRect(x, y, w, h, clampRadius(radius, w, h));
+}
+
+const clampRadius = (radius: number, w: number, h: number): number =>
+  Math.max(0, Math.min(radius, w / 2, h / 2));
 
 export interface TextOptions {
   size?: number;
@@ -164,6 +179,72 @@ export function softShadow(
   }
 }
 
+
+/* ------------------------------------------------------------------ glyphs */
+
+/**
+ * A mark drawn into a caller's graphics object.
+ *
+ * Vector rather than emoji or an image: emoji render as full-colour cartoons
+ * from a system font that this game has no say over, which would be the only
+ * loud thing on a screen of grey ink on paper. These are two or three strokes
+ * each, they take the colour they are given, and they cost nothing to ship.
+ */
+export type Glyph = (
+  g: Phaser.GameObjects.Graphics,
+  x: number,
+  y: number,
+  color: number,
+  alpha: number
+) => void;
+
+/**
+ * The reveal: an eye.
+ *
+ * The SAME two strokes as the Reveal pill in GameScene — a stroked ring with a
+ * pupil. What the store sells has to look like the thing it buys, or the row is
+ * just a price with a number next to it.
+ */
+export const eyeGlyph: Glyph = (g, x, y, color, alpha) => {
+  g.lineStyle(pt(1.4), color, alpha);
+  g.strokeCircle(x, y, pt(5));
+  g.fillStyle(color, alpha);
+  g.fillCircle(x, y, pt(1.8));
+};
+
+/** A video: a screen with a play triangle, for the rewarded row. */
+export const videoGlyph: Glyph = (g, x, y, color, alpha) => {
+  const w = pt(13);
+  const h = pt(9.5);
+  g.lineStyle(pt(1.3), color, alpha);
+  strokeRoundRect(g, x - w / 2, y - h / 2, w, h, pt(2));
+  g.fillStyle(color, alpha);
+  g.fillTriangle(
+    x - pt(1.6), y - pt(3),
+    x - pt(1.6), y + pt(3),
+    x + pt(3.2), y
+  );
+};
+
+/**
+ * No ads: a banner with a line through it.
+ *
+ * Not an infinity sign. ∞ says "unlimited reveals", which is the second half of
+ * what this product gives and reads as a maths symbol next to a price; the
+ * struck banner says the half people are actually buying.
+ */
+export const noAdsGlyph: Glyph = (g, x, y, color, alpha) => {
+  const w = pt(13);
+  const h = pt(8);
+  g.lineStyle(pt(1.3), color, alpha * 0.75);
+  strokeRoundRect(g, x - w / 2, y - h / 2, w, h, pt(1.6));
+  g.lineStyle(pt(1.5), color, alpha);
+  g.beginPath();
+  g.moveTo(x - w / 2 - pt(1.5), y + h / 2 + pt(1.5));
+  g.lineTo(x + w / 2 + pt(1.5), y - h / 2 - pt(1.5));
+  g.strokePath();
+};
+
 /* ----------------------------------------------------------------- button */
 
 export interface ButtonOptions {
@@ -172,6 +253,14 @@ export interface ButtonOptions {
   variant?: 'primary' | 'secondary' | 'ghost';
   size?: number;
   sub?: string;
+  /**
+   * A mark on the left, with the text still centred in the space that is left.
+   *
+   * The label is NOT shifted to make room. A row of icons down the left edge
+   * with ragged captions beside them is harder to compare than centred text,
+   * and comparing rows is the only thing a store card is for.
+   */
+  icon?: Glyph;
   onPress: () => void;
 }
 
@@ -257,9 +346,22 @@ export function button(
   paint(false);
   container.add(g);
 
+
   const onInk = variant === 'primary';
   const labelColor = onInk ? t.paper : t.ink;
   const labelY = opts.sub ? -pt(9) : 0;
+  if (opts.icon) {
+    /*
+     * Its own graphics object, not the face's.
+     *
+     * `paint` clears and redraws on every press, so a mark drawn into the same
+     * object would vanish the moment the button was touched — and reappear only
+     * if it happened to be released over the button.
+     */
+    const mark = scene.add.graphics();
+    opts.icon(mark, -w / 2 + pt(24), 0, onInk ? t.paper : t.accent, onInk ? 0.9 : 0.85);
+    container.add(mark);
+  }
 
   const main = label(scene, 0, labelY, text, {
     size: opts.size ?? TYPE.heading,

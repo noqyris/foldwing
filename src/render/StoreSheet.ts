@@ -25,19 +25,25 @@ import { Progress } from '../systems/Progress';
 import { BASE_HEIGHT, BASE_WIDTH, pt, theme } from './Theme';
 import {
   button,
+  eyeGlyph,
   FONT,
+  type Glyph,
   label,
+  noAdsGlyph,
   RADIUS,
   roundRect,
   setButtonSub,
   softShadow,
   TYPE,
+  videoGlyph,
 } from './UI';
 
 export interface StoreOffer {
   readonly text: string;
   readonly sub?: string;
   readonly variant: 'primary' | 'secondary';
+  /** What the row sells, drawn on its left — see the glyphs in UI. */
+  readonly icon?: Glyph;
   /** Product id, on rows whose caption still changes when the store answers. */
   readonly priced?: string;
   readonly press: () => void;
@@ -104,6 +110,7 @@ export function storeOffers(hooks: StoreHooks): StoreOffer[] {
       text: 'Watch an ad',
       sub: '+1 reveal, free',
       variant: 'primary',
+      icon: videoGlyph,
       press: () => void earnReveal(hooks),
     });
   }
@@ -126,6 +133,9 @@ export function storeOffers(hooks: StoreHooks): StoreOffer[] {
         .filter(Boolean)
         .join(' · '),
       variant: 'secondary',
+      // The same eye the Reveal pill wears, so the row looks like the thing it
+      // buys rather than a number beside a price.
+      icon: eyeGlyph,
       priced: pack.id,
       press: () =>
         void (async () => {
@@ -142,6 +152,7 @@ export function storeOffers(hooks: StoreHooks): StoreOffer[] {
       text: 'Remove ads',
       sub: [removeAds.priceString, 'unlimited reveals, no ads'].filter(Boolean).join(' · '),
       variant: 'secondary',
+      icon: noAdsGlyph,
       priced: removeAds.id,
       press: () =>
         void (async () => {
@@ -231,6 +242,7 @@ export function showStoreSheet(
       variant: offer.variant,
       size: TYPE.label,
       sub: offer.sub || undefined,
+      icon: offer.icon,
       onPress: () => {
         opts.onClose();
         offer.press();
