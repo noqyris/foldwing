@@ -392,26 +392,51 @@ export class MenuScene extends Phaser.Scene {
      * and the native prompt is throttled to a few a year and may show nothing.
      */
     /*
-     * Game Center, above the rating row.
+     * Game Center, above the rating row — BOTH of its screens.
      *
      * The leaderboard used to be reachable only from the Daily Fold's win
-     * screen — the moment of highest intent, and also the only one, so a player
-     * who had not finished today's fold could not find it at all. This is where
-     * someone goes looking for scores and achievements.
+     * screen: the moment of highest intent, and also the only one, so a player
+     * who had not finished today's fold could not find it at all. That got a
+     * row here. The row then opened the board and only the board, which left
+     * the eight achievements with no door in the entire app — earned silently,
+     * announced by GameKit's own banner, and afterwards unfindable. Two
+     * buttons, because they are two different screens and a single "Game
+     * Center" button has to pick one.
+     *
+     * Side by side rather than stacked: the sheet's height is derived from the
+     * row count, and a second full row would push the rating button toward the
+     * bottom edge for the sake of a screen most players open once.
      *
      * Hidden where GameKit does not exist rather than shown dead: the web build
      * has no Game Center, and a button that cannot work is worse than no button.
      */
     if (GameCenter.available) {
+      const gcY = -h / 2 + pt(58) + rowH * rows.length + rowH / 2;
+      const gap = pt(10);
+      const halfW = (w - pt(40) - gap) / 2;
+      const opts = {
+        width: halfW,
+        height: pt(38),
+        variant: 'secondary' as const,
+        size: TYPE.label,
+      };
       sheet.add(
-        button(this, 0, -h / 2 + pt(58) + rowH * rows.length + rowH / 2, 'Game Center', {
-          width: w - pt(40),
-          height: pt(38),
-          variant: 'secondary',
-          size: TYPE.label,
+        button(this, -(halfW + gap) / 2, gcY, 'Leaderboard', {
+          ...opts,
           onPress: () => {
             Haptics.tap();
             void GameCenter.show().then((shown) => {
+              if (!shown) this.flash('game center is not signed in');
+            });
+          },
+        })
+      );
+      sheet.add(
+        button(this, (halfW + gap) / 2, gcY, 'Achievements', {
+          ...opts,
+          onPress: () => {
+            Haptics.tap();
+            void GameCenter.showAchievements().then((shown) => {
               if (!shown) this.flash('game center is not signed in');
             });
           },
