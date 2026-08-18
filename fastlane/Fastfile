@@ -199,13 +199,33 @@ platform :ios do
   # blank space. build/ is gitignored, so it can never be committed.
   TEST_ADS_MARKER = "../build/.test-ads"
 
-  desc "Build and upload to TestFlight"
+  desc "REMOVED — it distributed real ads to testers. Use beta_testads or release_build."
+  # This lane built with LIVE ad units and handed the result straight to the
+  # internal tester group. That is the exact act that closed publisher
+  # pub-3307486877162157 for invalid traffic on 2026-08-18: builds 42 through 45
+  # went to TestFlight carrying real inventory, on the account owner's own phone.
+  #
+  # It is kept as a refusal rather than deleted. `fastlane beta` is muscle memory
+  # and the name is in old notes and shell history; deleting it produces "lane
+  # not found", which reads like breakage and invites someone to reconstruct it.
+  # A lane that explains why it is gone cannot be rebuilt by accident.
+  #
+  # There is no remaining case for it. Real ads exist to be sold to strangers,
+  # never shown to testers, so the two live paths are:
+  #
+  #   test ads  -> testers      `npm run ios:testflight && fastlane beta_testads`
+  #   real ads  -> App Store    `npm run release:appstore`
   lane :beta do
-    if File.exist?(TEST_ADS_MARKER)
-      UI.user_error!("dist/ holds a TEST ADS bundle. Run `npm run ios:sync` for a live build, or `fastlane beta_testads` if test ads were the intent.")
-    end
-    build_ipa
-    upload_and_distribute
+    UI.user_error!(<<~MSG)
+      `beta` is gone: it put REAL ad units on TestFlight, which is what closed
+      pub-3307486877162157 on 2026-08-18.
+
+        for testers:    npm run ios:testflight && fastlane beta_testads
+        for the store:  npm run release:appstore
+
+      release:appstore uploads the real-ads build AND follows it with a test-ads
+      build, so the newest thing on TestFlight is never the one with real ads.
+    MSG
   end
 
   desc "TestFlight build that SHOWS ADS — test units. Never submit one of these."
@@ -214,8 +234,8 @@ platform :ios do
   # sees blank space and cannot judge placement or frequency at all. Test units
   # render immediately.
   #
-  # Both halves are overridden for this archive only: VITE_TEST_ADS=1 in the web
-  # bundle (via `npm run ios:sync:testads`) and GAD_APPLICATION_IDENTIFIER on the
+  # Test ads are now the DEFAULT of the web bundle (VITE_AD_MODE unset), and
+  # GAD_APPLICATION_IDENTIFIER is overridden for this archive only, on the
   # xcodebuild command line. Nothing is written to the working tree, so the next
   # ordinary `fastlane beta` is a submission build again with no cleanup step to
   # forget — which is the step that was forgotten before build 19.
@@ -319,12 +339,24 @@ platform :ios do
   # reviewed binary does not contain — which is not a silent problem, it is a
   # rejection with the app's own changelog as the evidence.
   #
-  # IT UPLOADS BUT DOES NOT DISTRIBUTE. Every build that reaches App Store
-  # Connect is technically a TestFlight build, and this one carries LIVE ad
-  # units. Testers get test units — always — so this one is deliberately handed
-  # to no group at all: `upload_and_distribute` is NOT used, and no
-  # add_beta_groups call happens. It is visible to the release process and
-  # installable by nobody.
+  # IT UPLOADS BUT DOES NOT DISTRIBUTE — AND THAT IS NOT ENOUGH ON ITS OWN.
+  #
+  # This lane hands the build to no group: `upload_and_distribute` is not used
+  # and no add_beta_groups call happens. On THIS app that does keep it off
+  # testers' phones — Foldwing's only internal group reports
+  # hasAccessToAllBuilds=false (verified against the API on 2026-08-18), so an
+  # unassigned build is not offered to it.
+  #
+  # Do not lean on that. It is a per-app setting nobody here chose deliberately,
+  # it is `true` on other apps in this portfolio, and CLAUDE.md assumes the
+  # dangerous value on purpose. A safety property that depends on a flag no
+  # release step asserts is not a safety property.
+  #
+  # So the real protection is the SECOND UPLOAD, not the missing group
+  # assignment: `npm run release:appstore` follows this lane with a test-ads
+  # build N+1, which becomes the newest thing on TestFlight. Running this lane
+  # alone leaves a real-ads binary as the newest build, which is the state that
+  # closed pub-3307486877162157 on 2026-08-18.
   #
   # IT DOES NOT SUBMIT, AND THAT IS THE POINT. The last step of a release is a
   # decision, not a task. This lane stops with the version armed and the build
@@ -333,6 +365,13 @@ platform :ios do
     if File.exist?(TEST_ADS_MARKER)
       UI.user_error!("dist/ holds a TEST ADS bundle — a store build must never carry test units. Run `npm run ios:sync` first.")
     end
+    UI.important("=" * 68)
+    UI.important("This build carries REAL AD UNITS.")
+    UI.important("After processing it becomes a build on TestFlight. Do NOT open it,")
+    UI.important("and do NOT tap an ad in it — that is the invalid traffic that closed")
+    UI.important("pub-3307486877162157 on 2026-08-18.")
+    UI.important("=" * 68)
+
     build_ipa
     upload_to_testflight(
       api_key: asc_key,
@@ -340,6 +379,14 @@ platform :ios do
       distribute_external: false
     )
     attach_to_version
+
+    # Half a release. Say so, every time, so a session that stops here is
+    # obviously unfinished rather than quietly unsafe.
+    UI.important("=" * 68)
+    UI.important("HALF DONE. A real-ads build is now the newest upload.")
+    UI.important("Finish with:  npm run ios:testflight && fastlane beta_testads")
+    UI.important("(`npm run release:appstore` does both halves in one command.)")
+    UI.important("=" * 68)
   end
 
   # Wait for the build just uploaded, then point the editable version at it.
@@ -391,6 +438,42 @@ platform :ios do
   # FOLDWING_BUILD_NUMBER picks the build; without it, the newest VALID one.
   lane :attach_build do
     attach_to_version
+  end
+
+  desc "Expire a TestFlight build so nobody can install it. Does NOT affect the App Store."
+  # Step 3 of the two-build release, and the only one that had no command.
+  #
+  # Once the store build reaches READY_FOR_SALE it has done its job, but it is
+  # still sitting in TestFlight carrying real ad units. Expiring removes it from
+  # the tester list without touching the store listing — verified on
+  # com.noqyris.kvizko build 51, which was simultaneously READY_FOR_SALE for 1.2
+  # and expired:true on TestFlight.
+  #
+  #   fastlane expire_build build:52
+  #
+  # Without `build:` it expires the newest one, which is almost never what is
+  # wanted — so it refuses instead of guessing.
+  lane :expire_build do |options|
+    number = options[:build] or UI.user_error!("which build? e.g. `fastlane expire_build build:52`")
+    require "spaceship"
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      filepath: File.expand_path(ENV.fetch("ASC_KEY_PATH"))
+    )
+    app = Spaceship::ConnectAPI::App.find(APP_ID)
+    build = app.get_builds(sort: "-version").find { |b| b.version == number.to_s }
+    UI.user_error!("no build #{number} on this app") unless build
+    if build.expired
+      UI.success("build #{number} is already expired")
+      next
+    end
+
+    # Spaceship's own call. A hand-rolled PATCH here took keyword args against a
+    # positional signature and would have thrown on first use.
+    build.expire!
+    UI.success("build #{number} expired — no longer installable from TestFlight")
+    UI.message("The App Store listing is untouched.")
   end
 
   desc "Re-upload the ipa already in build/ without rebuilding"
