@@ -45,7 +45,7 @@ Archive a signed App Store build
 [bundle exec] fastlane ios beta
 ```
 
-Build and upload to TestFlight
+REMOVED — it distributed real ads to testers. Use beta_testads or release_build.
 
 ### ios beta_testads
 
@@ -54,6 +54,30 @@ Build and upload to TestFlight
 ```
 
 TestFlight build that SHOWS ADS — test units. Never submit one of these.
+
+### ios release_build
+
+```sh
+[bundle exec] fastlane ios release_build
+```
+
+Live-ads build, uploaded and ATTACHED to the editable App Store version. Does not submit.
+
+### ios attach_build
+
+```sh
+[bundle exec] fastlane ios attach_build
+```
+
+Point the editable App Store version at an already-uploaded build
+
+### ios expire_build
+
+```sh
+[bundle exec] fastlane ios expire_build
+```
+
+Expire a TestFlight build so nobody can install it. Does NOT affect the App Store.
 
 ### ios beta_upload
 
