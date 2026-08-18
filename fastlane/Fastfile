@@ -8,6 +8,9 @@
 #   fastlane verify             # does the API key work, does the app exist
 #   fastlane setup_app          # create the App Store Connect record
 #   fastlane beta               # archive + upload to TestFlight
+#   fastlane release_build      # live-ads build, uploaded AND attached to
+#                               # the editable version. Stops there — sending
+#                               # it to Apple is a decision, not a lane.
 #
 # The web build and `cap sync` deliberately run in the shell BEFORE fastlane:
 # CocoaPods misbehaves under fastlane's bundled Ruby, and forgetting the sync
@@ -277,6 +280,97 @@ platform :ios do
 
     build.add_beta_groups(beta_groups: groups)
     UI.success("build #{build.version} handed to #{groups.map(&:name).join(', ')} — installable now")
+  end
+
+  desc "Live-ads build, uploaded and ATTACHED to the editable App Store version. Does not submit."
+  # THE SUBMISSION BUILD. Everything up to the point where a human says go.
+  #
+  # This exists because the version record kept pointing at a stale binary.
+  # Version 1.3 sat with build 41 attached — uploaded before the opening film,
+  # the store, the music, Game Center, the achievements and the reminders were
+  # written — while six newer builds went past it. Nothing in the process
+  # updated the attachment, because attaching was a thing somebody did by hand
+  # in the web UI, and a manual step in a release is a step that eventually does
+  # not happen. That is the same failure that left builds 36-41 undistributed,
+  # and the fix is the same: put it in the lane.
+  #
+  # The hazard is worse here than a missing tester build. Release notes describe
+  # the newest work, so a stale attachment means the notes promise features the
+  # reviewed binary does not contain — which is not a silent problem, it is a
+  # rejection with the app's own changelog as the evidence.
+  #
+  # IT UPLOADS BUT DOES NOT DISTRIBUTE. Every build that reaches App Store
+  # Connect is technically a TestFlight build, and this one carries LIVE ad
+  # units. Testers get test units — always — so this one is deliberately handed
+  # to no group at all: `upload_and_distribute` is NOT used, and no
+  # add_beta_groups call happens. It is visible to the release process and
+  # installable by nobody.
+  #
+  # IT DOES NOT SUBMIT, AND THAT IS THE POINT. The last step of a release is a
+  # decision, not a task. This lane stops with the version armed and the build
+  # in place; sending it to Apple stays a separate, deliberate act.
+  lane :release_build do
+    if File.exist?(TEST_ADS_MARKER)
+      UI.user_error!("dist/ holds a TEST ADS bundle — a store build must never carry test units. Run `npm run ios:sync` first.")
+    end
+    build_ipa
+    upload_to_testflight(
+      api_key: asc_key,
+      skip_waiting_for_build_processing: true,
+      distribute_external: false
+    )
+    attach_to_version
+  end
+
+  # Wait for the build just uploaded, then point the editable version at it.
+  #
+  # Waits for THIS build by number for the same reason distribute_internally
+  # does: in the minutes after an upload the newest build App Store Connect can
+  # see is still the previous one, so "attach the latest" would attach the
+  # wrong binary and look like it had worked.
+  def attach_to_version
+    expected = ENV["FOLDWING_BUILD_NUMBER"]
+    require "spaceship"
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: ENV.fetch("ASC_KEY_ID"),
+      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+      filepath: File.expand_path(ENV.fetch("ASC_KEY_PATH"))
+    )
+    app = Spaceship::ConnectAPI::App.find(APP_ID)
+
+    build = nil
+    20.times do
+      candidates = app.get_builds(sort: "-version")
+      found = expected ? candidates.find { |b| b.version == expected } : candidates.first
+      if found && found.processing_state == "VALID"
+        build = found
+        break
+      end
+      UI.message("build #{expected || found&.version} is #{found&.processing_state || 'not listed yet'}; waiting")
+      sleep(45)
+    end
+    unless build
+      UI.important("Build #{expected} still processing. Re-run `fastlane attach_build` once it is VALID.")
+      return
+    end
+
+    version = app.get_edit_app_store_version
+    if version.nil?
+      UI.important("No editable App Store version — create one in App Store Connect, then run `fastlane attach_build`.")
+      return
+    end
+
+    version.select_build(build_id: build.id)
+    UI.success("version #{version.version_string} now points at build #{build.version}")
+    UI.important("NOT submitted for review. That is a separate, deliberate step.")
+  end
+
+  desc "Point the editable App Store version at an already-uploaded build"
+  # The recovery path for when the upload landed but the attach did not — a
+  # timeout, a version that did not exist yet, a build still processing.
+  # FOLDWING_BUILD_NUMBER picks the build; without it, the newest VALID one.
+  lane :attach_build do
+    attach_to_version
   end
 
   desc "Re-upload the ipa already in build/ without rebuilding"
