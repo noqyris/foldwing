@@ -32,6 +32,9 @@ dist-daily/
 
 # scratch audit scripts
 scripts/_audit_*.ts
+# throwaway probes that need to sit inside the project so vite-node can
+# resolve src/ imports — never part of the build
+.scratch/
 
 # Screenshot intermediates — regenerate with scripts/screenshots/capture.mjs
 store/screenshots/raw/
