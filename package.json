@@ -13,11 +13,16 @@
     "test:fast": "vitest run --exclude 'src/data/**'",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",
-    "ios:sync": "npm run build && npx cap sync ios && mkdir -p build && rm -f build/.test-ads",
-    "ios:sync:testads": "npm run typecheck && npm test && VITE_TEST_ADS=1 vite build && npx cap sync ios && mkdir -p build && touch build/.test-ads",
+    "ios:sync": "npm run build && node scripts/check-ad-mode.mjs live && npx cap sync ios && mkdir -p build && rm -f build/.test-ads",
+    "ios:sync:testads": "npm run typecheck && npm test && VITE_TEST_ADS=1 vite build && node scripts/check-ad-mode.mjs test && npx cap sync ios && mkdir -p build && touch build/.test-ads",
     "ios:open": "npx cap open ios",
     "ios:run": "npm run ios:sync && xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Debug -sdk iphonesimulator -destination \"id=$SIM\" -derivedDataPath .build/ios CODE_SIGNING_ALLOWED=NO build >/dev/null && xcrun simctl install \"$SIM\" .build/ios/Build/Products/Debug-iphonesimulator/App.app && xcrun simctl terminate \"$SIM\" com.noqyris.foldwing 2>/dev/null; xcrun simctl launch \"$SIM\" com.noqyris.foldwing",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "ads:check": "node scripts/check-ad-mode.mjs",
+    "build:test": "VITE_TEST_ADS=1 npm run build && node scripts/check-ad-mode.mjs test",
+    "build:live": "npm run build && node scripts/check-ad-mode.mjs live",
+    "ios:testflight": "npm run build:test && npx cap sync ios",
+    "ios:appstore": "npm run build:live && npx cap sync ios"
   },
   "dependencies": {
     "@capacitor-community/admob": "^7.2.0",

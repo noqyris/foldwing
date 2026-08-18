@@ -75,6 +75,26 @@ platform :ios do
 
   desc "Archive a signed App Store build"
   lane :build_ipa do |options|
+    # PROVE WHAT IS ACTUALLY IN THE BUNDLE, not what a marker file remembers.
+    #
+    # TEST_ADS_MARKER records which npm script ran last. That is a claim about
+    # history, and history goes stale: a hand-run `vite build` (or `npm run
+    # build`, which is live by default) followed by `cap sync` replaces the web
+    # assets underneath a marker that still says "test ads". The lane would then
+    # archive live inventory and hand it to TestFlight, which is precisely how
+    # publisher pub-3307486877162157 was closed for invalid traffic on
+    # 2026-08-18 — an owner installs the newest TestFlight build and taps an ad
+    # in what he believes is a test build.
+    #
+    # So the marker stays as the fast, friendly check and this reads the SYNCED
+    # bundle — the exact JavaScript that goes inside the ipa — and refuses on a
+    # mismatch. A check that can be skipped is not a check, so it lives here in
+    # the archive path rather than in a script somebody remembers to run.
+    want = options[:test_ads] ? "test" : "live"
+    unless system("node", "scripts/check-ad-mode.mjs", want, "ios/App/App/public/assets")
+      UI.user_error!("ad-mode check failed: the synced bundle does not carry #{want.upcase} ad units. Re-run the matching npm sync script.")
+    end
+
     key = asc_key
     # Always land above whatever App Store Connect already has: a duplicate
     # build number is rejected after the upload has already been paid for.
