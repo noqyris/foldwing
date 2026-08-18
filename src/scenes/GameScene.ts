@@ -1195,7 +1195,9 @@ export class GameScene extends Phaser.Scene {
 
     rowY += pt(48);
     sheet.add(
-      button(this, BASE_WIDTH / 2, rowY, 'Get the app · 300 more folds', {
+      // Counted rather than typed: this is a promise about what is in the app,
+      // and a stale number here is a promise the store build does not keep.
+      button(this, BASE_WIDTH / 2, rowY, `Get the app · ${LEVELS.length} more folds`, {
         width: cw - pt(32),
         height: pt(44),
         variant: 'primary',

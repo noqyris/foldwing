@@ -85,8 +85,11 @@ export class MenuScene extends Phaser.Scene {
     if (finished) this.registry.remove('campaignComplete');
 
     // Held on the scene so `flash` can borrow the slot and put it back.
+    // Counted, not typed. The campaign has grown before and the sentence
+    // congratulating someone for finishing it must not be the thing that
+    // remembers the old number.
     this.taglineText = finished
-      ? 'all 300 folded. the daily is still yours.'
+      ? `all ${LEVELS.length} folded. the daily is still yours.`
       : 'one line. two answers.';
     this.taglineAlpha = finished ? 0.62 : 0.42;
 
