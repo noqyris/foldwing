@@ -5,12 +5,30 @@
  * LaunchScreen.storyboard, and it has to stay, because it is what covers the
  * gap before any JavaScript exists at all. This plays straight after it.
  *
- * The film is a studio sting on BLACK, so the ground here is black too: the
- * overlay is what the eye sees at the edges and during the fade, and paper
- * behind a black film would rim it in cream. Note the launch image is still
- * light, so the opening currently reads light → black → light. Making
- * LaunchScreen black would close that seam, but it changes the very first
- * thing anyone sees, so it is a decision rather than a tidy-up.
+ * THE GROUND IS PAPER, AND THE FILM FADES UP OUT OF IT.
+ *
+ * The film is a studio sting on black, which used to make this overlay black
+ * too — and that put a hard cut in the opening. The launch image is paper, the
+ * page behind is paper, and then a black rectangle appeared in one frame:
+ * light → black → light, with the first cut landing before anybody had touched
+ * anything.
+ *
+ * Painting LaunchScreen black does NOT fix that. It moves the cut earlier and
+ * adds a second one — black launch, paper page while the bundle loads, black
+ * film, paper game — because the webview shows the page's own background long
+ * before this module runs. The seam is not where the film ends, it is where the
+ * film BEGINS, so that is where it is closed: the overlay is paper, identical
+ * to the page underneath, and the video alone fades up over it. Nothing changes
+ * colour at mount, and the sting emerges from the same paper the game is drawn
+ * on.
+ *
+ * `objectFit: cover` means the ground is never actually seen once a frame is
+ * up, so paper costs nothing at the edges — it only shows during the two fades,
+ * which is exactly where it is wanted.
+ *
+ * The video is revealed on its FIRST DECODED FRAME rather than on a timer. An
+ * empty <video> paints its own black box before it has anything to show, so
+ * fading it in blind would put back the flash this removes.
  *
  * Everything here is built around one rule: the film may never be the reason
  * somebody cannot play. It sits ON TOP of a game that is already booting, it
@@ -49,6 +67,13 @@ const SAFETY_MS = 7000;
 /** Long enough not to nag, short enough to be found before boredom sets in. */
 const HINT_AFTER_MS = 1400;
 const FADE_MS = 280;
+/**
+ * How long the film takes to rise out of the paper.
+ *
+ * Shorter than the fade out. Arriving wants to feel like the sting starting;
+ * leaving wants to feel like getting out of the way.
+ */
+const FADE_IN_MS = 220;
 /**
  * The overlay stays in the DOM, invisible and still swallowing input, for this
  * long after it has faded.
@@ -114,7 +139,11 @@ export function playIntro(src = new URL('intro.mp4', document.baseURI).href): Pr
       position: 'fixed',
       inset: '0',
       zIndex: '9999',
-      background: '#000',
+      // The paper the page is already painted in — see the header. Hardcoded
+      // rather than read from the theme because this runs before the save
+      // exists, so the cosmetic in play is unknown; what is on screen at this
+      // instant is index.html's own background, and this has to match THAT.
+      background: '#e9ebe4',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -146,6 +175,9 @@ export function playIntro(src = new URL('intro.mp4', document.baseURI).href): Pr
       height: '100%',
       objectFit: 'cover',
       pointerEvents: 'none',
+      // Hidden until there is a real frame behind it; see the header.
+      opacity: '0',
+      transition: `opacity ${FADE_IN_MS}ms ease`,
     } satisfies Partial<CSSStyleDeclaration>);
 
     const hint = document.createElement('div');
@@ -211,6 +243,19 @@ export function playIntro(src = new URL('intro.mp4', document.baseURI).href): Pr
       },
       { capture: true }
     );
+    /*
+     * Rise out of the paper the moment there is something to show.
+     *
+     * Both events, because neither is reliable alone: `loadeddata` is the one
+     * that means a frame exists, but a video restored from the page cache can
+     * reach `playing` without firing it again. Whichever lands first wins and
+     * the second is a no-op.
+     */
+    const reveal = (): void => {
+      video.style.opacity = '1';
+    };
+    video.addEventListener('loadeddata', reveal);
+    video.addEventListener('playing', reveal);
     video.addEventListener('ended', finish);
     video.addEventListener('error', finish);
     // A decoder that never produces a frame is indistinguishable from a hang.
