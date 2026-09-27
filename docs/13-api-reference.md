@@ -3,11 +3,13 @@
 >
 > This page describes the retired **100-level set of bar obstacles** and the
 > generator that produced it. Neither still exists. The game now ships 300
-> levels — five hand-authored and 295 spanning-tree mazes built by
-> `src/core/MazeGen.ts`, which is also what the Daily Fold runs on the phone —
-> so every level count below is wrong, and any passage about wall placement,
-> interlock reservation or inert-wall stripping describes code that was
-> deleted with the bar set.
+> spanning-tree mazes built by `src/core/MazeGen.ts`, which is also what the
+> Daily Fold runs on the phone — so every level count below is wrong, and any
+> passage about wall placement, interlock reservation or inert-wall stripping
+> describes code that was deleted with the bar set. The tutorial went too: the
+> five hand-authored bar levels, LOCKED wherever they appear below, were
+> replaced in September 2026 by five small mazes from
+> `scripts/genTutorialMazes.ts`, and save schema 3 forgets clears of the old ones.
 >
 > The "Source files" line-count tables are wrong too, and that matters more
 > than it looks: the `file:line` citations throughout were counted against
@@ -16,6 +18,10 @@
 >
 > Kept because the reasoning is still worth having. For what the game actually
 > does now, see [../README.md](../README.md).
+>
+> **1.4 (September 2026)** changed `monetization`, `Iap`, `Rate`, `Audio`, `Haptics` and
+> `Progress` (rewritten below) and added a dozen modules, whose exports are gathered
+> in "The 1.4 modules" near the end rather than folded into the 1.3 alphabet.
 
 ---
 
@@ -38,11 +44,13 @@ For *why* a symbol behaves as it does, follow the cross-references to the siblin
 | `src/core/DrawCursor.ts` | 40 | Finger position → ink position (touch thumb-lift offset) |
 | `src/core/Geometry.ts` | 326 | Pure 2D math: vectors, rects, segment/rect/circle predicates |
 | `src/core/LevelValidator.ts` | 337 | BFS solvability proof + clearance/interlock/difficulty metrics |
+| `src/core/MazeGen.ts` | — | The maze as a pure function of a seed, in stages: `carveMaze` → fold decisions → `emitMaze`; `makeCandidate` drives them for the ladder and the Daily |
 | `src/core/Playfield.ts` | 87 | The single normalized↔pixel conversion, and the axis clamp |
 | `src/core/Ribbon.ts` | 185 | Speed-varying nib width → quads + discs (render only) |
 | `src/core/StrokeRecorder.ts` | 238 | Raw sample capture; densify/Chaikin smoothing; closed figure |
 | `src/data/generatedLevels.ts` | 1751 | Generated output: 95 `Level` literals, ids `l6`..`l100` |
-| `src/data/levels.ts` | 95 | 5 hand-authored levels + generated set + wrapping accessor |
+| `src/data/levels.ts` | 20 | Tutorial + generated set + wrapping accessor |
+| `src/data/tutorialLevels.ts` | — | Generated output: the 5 tutorial mazes, ids `l1`..`l5` |
 | `src/data/types.ts` | 34 | `Level` shape and the LOCKED coordinate-system contract |
 | `src/main.ts` | 67 | Phaser `Game` construction + viewport refresh; **no exports** |
 | `src/render/HitArea.ts` | 67 | Phaser hit-rect maths, Phaser-free so it can be unit tested |
@@ -56,14 +64,18 @@ For *why* a symbol behaves as it does, follow the cross-references to the siblin
 | `src/scenes/GameScene.ts` | 707 | The core loop: idle → drawing → failed/won |
 | `src/scenes/LevelSelectScene.ts` | 308 | Baked 3-column grid of 100 level preview cards |
 | `src/scenes/MenuScene.ts` | 216 | Home page: wordmark, Play/Levels/Gallery, IAP rows |
-| `src/systems/Ads.ts` | 302 | AdMob singleton; all cadence policy lives behind its gates |
-| `src/systems/Audio.ts` | 173 | Web Audio synthesis: rising pentatonic notes, thud, chime |
+| `src/systems/Ads.ts` | — | Ad policy singleton (Unity LevelPlay behind `src/systems/adProvider.ts`); all cadence policy lives behind its gates |
+| `src/systems/SessionClock.ts` | — | Pure: the ad session's age in foreground time — `start(now, visible)`, `hide(now)`, `show(now)`, `ageSeconds(now)`; decides no new session |
+| `src/core/Session.ts` | — | Pure: what counts as a session — `isNewSessionOnReturn({ hiddenAtMs, hiddenDay, nowMs, today })`, `onHidden`, `onVisible`, `SESSION_GAP_MS` |
+| `src/systems/SessionLifecycle.ts` | — | `startColdSession()`, `noteHidden()`, `noteVisible() → boolean`, `sessionNumber()`, `renewedSinceLaunch()`, `onSessionStart(fn)`, `whenAppActive()`, `whenAdLayerMayStart()`; count under `foldwing.sessions` |
+| `src/systems/Audio.ts` | — | Web Audio synthesis: rising pentatonic notes, thud, the win celebration, reward sounds |
 | `src/systems/Haptics.ts` | 47 | Capacitor Haptics wrapper; no-op on web |
 | `src/systems/Iap.ts` | 206 | `cordova-plugin-purchase` Remove-Ads non-consumable |
 | `src/systems/Progress.ts` | 304 | Capacitor Preferences save: unlocks, reveals, figures |
 | `src/systems/Rate.ts` | 38 | One-shot native review prompt |
 | `src/systems/Share.ts` | 104 | Native share sheet / Web Share / download fallback |
 | `scripts/genLevels.ts` | 467 | Side-effect script that writes `src/data/generatedLevels.ts` |
+| `scripts/genTutorialMazes.ts` | — | Side-effect script that writes `src/data/tutorialLevels.ts` |
 
 ## Conventions used below
 
@@ -78,70 +90,53 @@ For *why* a symbol behaves as it does, follow the cross-references to the siblin
 
 | symbol | kind | file:line |
 |---|---|---|
-| `admobUnits` | function | `src/config/monetization.ts:173` |
-| `adsConfigured` | const (arrow fn) | `src/config/monetization.ts:182` |
-| `AdUnits` | interface | `src/config/monetization.ts:38` |
-| `monetization` | const (`as const`) | `src/config/monetization.ts:90` |
+| `monetization` | const (`as const`) | `src/config/monetization.ts` |
+| `PricedPack` | interface | `src/config/monetization.ts` |
+| `packSaving` | function | `src/config/monetization.ts` |
+| `sellableLadder` | function (1.4) | `src/config/monetization.ts` |
+| `bestValueId` | function (1.4) | `src/config/monetization.ts` |
+| `starterWorthShowing` | function (1.4) | `src/config/monetization.ts` |
 
-### `admobUnits` — `src/config/monetization.ts:173`
+> **Removed with AdMob (September 2026):** `admobUnits`, `adsConfigured`, `AdUnits`,
+> the four AdMob unit tables and `monetization.useTestAds`. The ad ids now live in
+> `src/systems/providers/levelplay.ts` (`APP_KEYS`, `UNITS_BY_PLATFORM`, and
+> `levelplayConfigured()` in place of `adsConfigured()`); which build is live is
+> decided at build time by `VITE_AD_MODE` / `VITE_ADS` and proved by the
+> `ADMODE` / `ADS` markers. See [10-monetization.md](10-monetization.md) §2.
 
-```ts
-export function admobUnits(): AdUnits {
-  if (monetization.useTestAds) return isAndroid() ? TEST_ANDROID : TEST_IOS;
-  return isAndroid() ? LIVE_ANDROID : LIVE_IOS;
-}
-```
+### LevelPlay identifiers — `src/systems/providers/levelplay.ts`
 
-Resolved at call time, not module load, so tests can vary the platform. `isAndroid()` is the non-exported `(): boolean => Capacitor.getPlatform() === 'android'` (`:170`).
+| platform | app key | banner | interstitial | rewarded |
+|---|---|---|---|---|
+| iOS | `282ab31c5` | `h0a7k5pjpr3ziohk` | `w4ocqufvnz4i9mbt` | `e5mt76phyqseoqpa` |
+| Android | `''` | `''` | `''` | `''` |
 
-Non-exported unit sets it selects between:
+Resolved at call time, so tests can vary the platform. An empty key makes every ad
+path no-op cleanly on that platform instead of firing requests that can only fail.
+The same ids ship in live, ads-off, mock and test builds.
 
-| const | line | appId | banner | interstitial | rewarded |
-|---|---|---|---|---|---|
-| `TEST_IOS` | `:51` | `ca-app-pub-3940256099942544~1458002511` | `ca-app-pub-3940256099942544/2934735716` | `ca-app-pub-3940256099942544/4411468910` | `ca-app-pub-3940256099942544/1712485313` |
-| `TEST_ANDROID` | `:58` | `ca-app-pub-3940256099942544~3347511713` | `ca-app-pub-3940256099942544/6300978111` | `ca-app-pub-3940256099942544/1033173712` | `ca-app-pub-3940256099942544/5224354917` |
-| `LIVE_IOS` | `:76` | `ca-app-pub-3307486877162157~5033197766` | `ca-app-pub-3307486877162157/6426316277` | `ca-app-pub-3307486877162157/4373767928` | `ca-app-pub-3307486877162157/5113234608` |
-| `LIVE_ANDROID` | `:83` | `''` | `''` | `''` | `''` |
-
-`LIVE_IOS.appId` is duplicated in `ios/App/App/Info.plist` as `GADApplicationIdentifier`; `monetization.test.ts:45` fails the build if the two disagree or if the plist value does not match `useTestAds`.
-
-### `adsConfigured` — `src/config/monetization.ts:182`
-
-```ts
-export const adsConfigured = (): boolean => admobUnits().interstitial.length > 0;
-```
-
-False on Android today (`LIVE_ANDROID` is all-empty), which makes every ad path no-op cleanly instead of firing requests that can only fail. Pinned true for the active platform by `monetization.test.ts:34`.
-
-### `AdUnits` — `src/config/monetization.ts:38`
-
-```ts
-export interface AdUnits {
-  /** ca-app-pub-XXXX~NNNN — the tilde one. Goes in the NATIVE config, not here. */
-  readonly appId: string;
-  readonly banner: string;
-  readonly interstitial: string;
-  readonly rewarded: string;
-}
-```
-
-### `monetization` — `src/config/monetization.ts:90`
+### `monetization` — `src/config/monetization.ts`
 
 ```ts
 export const monetization = {
-  useTestAds: false,
-
   products: {
     removeAds: 'com.noqyris.foldwing.removeads',
+    revealPacks: [
+      { id: 'com.noqyris.foldwing.reveals10', count: 10 },
+      { id: 'com.noqyris.foldwing.reveals20', count: 20 },
+      { id: 'com.noqyris.foldwing.reveals30', count: 30 },
+    ],
   },
 
   ads: {
     interstitialFromLevel: 8,
     interstitialEveryNWins: 3,
-    interstitialEveryNAttempts: 5,
-    minSecondsBetweenInterstitials: 120,
-    sessionWarmupSeconds: 90,
-    maxInterstitialsPerSession: 4,
+    interstitialEveryNAttempts: 8,
+    sessionWarmupSeconds: 180,
+    minSecondsBetweenInterstitials: 180,
+    longSessionAfterSeconds: 600,
+    lateSecondsBetweenInterstitials: 120,
+    maxInterstitialsPerSession: 8,
     muteAfterRewardedSeconds: 300,
   },
 
@@ -150,27 +145,43 @@ export const monetization = {
     freeDailyTopUp: 1,
     startingStash: 2,
     durationMs: 6000,
+    offerRevealAfterAttempts: 3,
     offerSkipAfterAttempts: 6,
   },
 
-  rate: {
-    firstPromptAfterWins: 6,
+  economy: {
+    rewardedRevealsPerDay: 5,
+    missions: { count: 3, reward: 1, unlockAfterIndex: 5 },
+    chapter: { size: 20, halfReward: 1, fullReward: 2 },
+    streak: { bookmarkMax: 2, bookmarkAt: [3], bookmarkEvery: 7, guardMinRun: 2, overflowReveals: 1,
+              milestones: { 7: 2, 14: 3, 30: 5, 50: 5, 100: 10 }, everyFiftyAfter100: 5 },
+    repair: { maxGapDays: 1, cooldownDays: 14, minRun: 2 },
+    starter: { id: 'com.noqyris.foldwing.reveals25', count: 25, afterWins: 5 },
   },
+
+  ui: { winFrameScale: 0.74, winFrameScaleDaily: 0.7 },
 } as const;
+
+export function sellableLadder<T extends PricedPack & { readonly id: string }>(packs: readonly T[]): T[];
+export function bestValueId(kept: readonly (PricedPack & { readonly id: string })[]): string | null;
+export function starterWorthShowing(starter: PricedPack, kept: readonly PricedPack[]): boolean;
 ```
+
+The `rate` block is gone (1.4): the review prompt's numbers are `RATE_RULES` in
+`src/systems/Rate.ts`.
 
 Bounds pinned by `src/config/monetization.test.ts`:
 
-| field | assertion | line |
-|---|---|---|
-| `ads.interstitialFromLevel` | `>= 6` | `:70` |
-| `ads.interstitialEveryNWins` | `>= 3` | `:74` |
-| `ads.minSecondsBetweenInterstitials` | `>= 120` | `:75` |
-| `ads.maxInterstitialsPerSession` | `<= 4` | `:76` |
-| `ads.sessionWarmupSeconds` | `>= 60` | `:77` |
-| `ads.interstitialEveryNAttempts` | `>= 3` **and** `× 3s < minSecondsBetweenInterstitials` | `:91`, `:95` |
-| `ads.muteAfterRewardedSeconds` | `>= 180` | `:103` |
-| `reveals.offerSkipAfterAttempts` | `>= 5` | `:107` |
+| field | assertion |
+|---|---|
+| `ads.interstitialFromLevel` | `>= 6` |
+| `ads.interstitialEveryNWins` | `>= 3` |
+| `ads.minSecondsBetweenInterstitials`, `lateSecondsBetweenInterstitials`, `sessionWarmupSeconds` | `>= 120`; late `<=` min; `longSessionAfterSeconds > sessionWarmupSeconds` |
+| `ads.maxInterstitialsPerSession` | `>=` half of what the late floor allows in half an hour |
+| `ads.interstitialEveryNAttempts` | `>= 3`, `× 3s < lateSecondsBetweenInterstitials`, and `> reveals.offerSkipAfterAttempts` |
+| `ads.muteAfterRewardedSeconds` | `>= 180` |
+| `reveals.offerSkipAfterAttempts` | `>= 5` |
+| `economy` | top-up + missions `<= 4` and `<` the smallest pack; `3 <= rewardedRevealsPerDay <= 10`; a chapter `<= 5`; first-month milestones `<= 12` (`<= 15` at the bookmark cap); the starter is `reveals25`, off the ladder; repair cooldown `>= 7`; win frame scale in `(0.5, 1]` |
 
 The attempt counter is a *permission*, never a trigger on its own — see `Ads.wouldShowOnAttempt` and [10-monetization.md](10-monetization.md).
 
@@ -424,7 +435,63 @@ export function pressure(level: Level, pf: Playfield, cell = 8): number;// :320
 | `PLAYABLE_CLEARANCE` | `6` base px — the least slack a level may ship with. ~3 css px per side on a 390pt phone |
 | `pressure` | Fraction of drawable-half grid points blocked. Hardcodes `5.2` as the hit radius (`:322`). Descriptive statistic only — **no longer the sort key** (see `:255-261`) |
 
-Pinned by: `levels.test.ts:159` (`min(clearance) >= PLAYABLE_CLEARANCE` and `< PLAYABLE_CLEARANCE * 3`), `levels.test.ts:222` (`difficulty` monotone non-decreasing across `GENERATED_LEVELS`), `levels.test.ts:184` (`interlock > 0.05` for every generated level), `levels.test.ts:191` (`interlock === 0` for tutorial levels 1–4, `> 0.1` for level 5), `levels.test.ts:198` (mean generated `interlock > 0.2`), `levels.test.ts:139` (every level solvable at `hitRadius + PLAYABLE_CLEARANCE`).
+Pinned by: `levels.test.ts:159` (`min(clearance) >= PLAYABLE_CLEARANCE` and `< PLAYABLE_CLEARANCE * 3`), `levels.test.ts:301` (`difficulty` never steps backwards across all 300 `LEVELS`, and rises strictly from `l1` into `l6`; it used to cover `GENERATED_LEVELS` only), `levels.test.ts:262` (`interlock > 0.05` for every generated level), `levels.test.ts:269` (mean generated `interlock > 0.2`). The bar-era pin `interlock === 0` for tutorial levels 1–4, `> 0.1` for level 5, went with the bar tutorial in September 2026, `levels.test.ts:139` (every level solvable at `hitRadius + PLAYABLE_CLEARANCE`).
+
+---
+
+## `src/core/MazeGen.ts`
+
+Added with the maze rewrite and split into stages in September 2026, after this page was written, so there are no line numbers here. `Daily.ts`, `scripts/genLevels.ts` and `scripts/genTutorialMazes.ts` all import it: there is one definition of what a foldwing maze is.
+
+| symbol | kind |
+|---|---|
+| `carveMaze` | function |
+| `CarvedMaze` | interface |
+| `emitMaze` | function |
+| `makeCandidate` | function |
+| `MAZE_BOTTOM` | const `0.78` |
+| `MAZE_TOP` | const `0.14` |
+| `MazeCandidate` | interface — `{ level: Level; decoy: number }` |
+| `MazeParams` | interface — `{ cols; rows; foldFraction }` |
+| `MazeSeg` | interface |
+| `paramsFor` | function |
+| `rng` | function |
+
+```ts
+export function rng(seed: number): () => number;                                  // LCG 1664525 / 1013904223
+export function paramsFor(t: number, r: () => number): MazeParams;                // cols 3..7, rows 5..11, foldFraction ≈ 0.1 + 0.5·t
+export function carveMaze(r: () => number, C: number, R: number): CarvedMaze;
+export function emitMaze(id: string, maze: CarvedMaze, tx: number, ty: number): Level;
+export function makeCandidate(seed: number, t: number): MazeCandidate;
+
+export interface MazeSeg {
+  dir: 'h' | 'v';
+  line: number;                       // grid-line coordinate: y for 'h', x for 'v'
+  a: number;
+  b: number;
+  folded: boolean;                    // emitted on the far half?
+  cells: readonly [number, number];   // row * cols + c; -1 start runway, -2 goal band
+}
+
+export interface CarvedMaze {
+  cols: number;
+  rows: number;
+  openRight: ReadonlySet<number>;
+  openDown: ReadonlySet<number>;
+  entry: number;                      // bottom-row column under the start
+  exit: number;                       // top-row column under the goal
+  decoy: number;                      // fraction of cells OFF the one true route
+  segs: MazeSeg[];                    // closed edges in emission order
+}
+```
+
+A maze is built in three stages, and any caller may drive them:
+
+1. **`carveMaze`** carves a recursive-backtracker spanning tree over `C × R` cells of the drawable half, between `MAZE_TOP` and `MAZE_BOTTOM`. The entry is a random bottom-row column. The exit is the top-row cell farthest through the tree, so the one true route is as long as the maze allows. Every closed edge comes back as a `MazeSeg` with `folded: false`. `cells` is what lets a caller reason about routes and gates. It consumes `r` for the carve and the entry, nothing else.
+2. **Fold decisions** are the caller's: set `folded` on the segments that should be drawn only as a reflection.
+3. **`emitMaze`** merges segments into runs per side, with overlapped joints, and mirrors folded runs to `x = 1 - x - w`. It puts `start` under the entry at `y = 0.92` and `goal` over the exit at `y = 0.07`, and returns `name: ''`.
+
+**`makeCandidate(seed, t)`** is the driver for the ladder (`scripts/genLevels.ts`) and for the Daily Fold (`Daily.ts`). It runs `rng(seed)` → `paramsFor(t, r)` → `carveMaze`. It folds each segment with probability `foldFraction`, and forces one random fold if none landed, because the asymmetry invariant needs a far-half wall. Then it calls `emitMaze('g' + seed, maze, round(0.027 - 0.005·t), 0.021)`. The staged split consumes the rng in exactly the order the old single function did, so every seed still produces the same maze. `levels.test.ts` pins that with sha256 fingerprints of `GENERATED_LEVELS` and of 60 Daily Folds. `scripts/genTutorialMazes.ts` drives the three stages itself and *chooses* its folds (see `src/data/tutorialLevels.ts` below).
 
 ---
 
@@ -700,15 +767,15 @@ Count pinned at 95 by `levels.test.ts:27`.
 
 | symbol | kind | file:line |
 |---|---|---|
-| `LEVELS` | const | `src/data/levels.ts:89` |
-| `levelAt` | function | `src/data/levels.ts:92` |
-| `TUTORIAL_LEVELS` | const | `src/data/levels.ts:21` |
+| `LEVELS` | const | `src/data/levels.ts:14` |
+| `levelAt` | function | `src/data/levels.ts:17` |
+| `TUTORIAL_LEVELS` | const (re-export) | `src/data/levels.ts:5`, declared in `src/data/tutorialLevels.ts` |
 
 ```ts
-export const TUTORIAL_LEVELS: readonly Level[] = [ /* 5 entries, ids l1..l5 */ ];   // :21
-export const LEVELS: readonly Level[] = [...TUTORIAL_LEVELS, ...GENERATED_LEVELS];  // :89
+export { TUTORIAL_LEVELS };                                                         // :5, from './tutorialLevels'
+export const LEVELS: readonly Level[] = [...TUTORIAL_LEVELS, ...GENERATED_LEVELS];  // :14
 
-export function levelAt(index: number): Level {                                     // :92
+export function levelAt(index: number): Level {                                     // :17
   const n = LEVELS.length;
   return LEVELS[((index % n) + n) % n];
 }
@@ -716,19 +783,37 @@ export function levelAt(index: number): Level {                                 
 
 `levelAt` wraps in **both** directions, so level cycling never falls off either end (negative indices are legal).
 
-`TUTORIAL_LEVELS` verbatim — these numbers are LOCKED; the generator appends after them and never touches them:
+Ids equal positions (`LEVELS[i].id === 'l' + (i + 1)`), pinned by `levels.test.ts` › `keys every level by its position, because the save stores ids`: `Progress` keys clears by id and unlocks by index.
 
-| # | id | name | start | goal | walls |
-|---|---|---|---|---|---|
-| 1 | `l1` | First reflection | `{ x: 0.14, y: 0.88 }` | `{ x: 0.14, y: 0.12 }` | `{0, 0.44, 0.3, 0.06}`, `{0.5, 0.64, 0.28, 0.06}` |
-| 2 | `l2` | Zigzag | `{ x: 0.12, y: 0.9 }` | `{ x: 0.12, y: 0.1 }` | `{0, 0.72, 0.26, 0.05}`, `{0.5, 0.56, 0.3, 0.05}`, `{0, 0.4, 0.3, 0.05}`, `{0.5, 0.24, 0.34, 0.05}` |
-| 3 | `l3` | Gate | `{ x: 0.1, y: 0.9 }` | `{ x: 0.4, y: 0.1 }` | `{0, 0.6, 0.22, 0.06}`, `{0.34, 0.6, 0.16, 0.06}`, `{0.5, 0.36, 0.22, 0.06}`, `{0.86, 0.36, 0.14, 0.06}` |
-| 4 | `l4` | Sacrifice | `{ x: 0.1, y: 0.9 }` | `{ x: 0.1, y: 0.1 }` | `{0.5, 0.68, 0.38, 0.06}`, `{0, 0.5, 0.36, 0.06}`, `{0.62, 0.32, 0.38, 0.06}`, `{0.2, 0.18, 0.3, 0.06}` |
-| 5 | `l5` | Tangle | `{ x: 0.08, y: 0.92 }` | `{ x: 0.08, y: 0.08 }` | 7 walls, `src/data/levels.ts:73-81` |
+Until September 2026 `TUTORIAL_LEVELS` was five hand-authored bar levels, LOCKED, starting with `l1` First reflection `{ x: 0.14, y: 0.88 }` → `{ x: 0.14, y: 0.12 }` over walls `{0, 0.44, 0.3, 0.06}` and `{0.5, 0.64, 0.28, 0.06}`. Those levels are gone. Save schema 3 forgets clears of them (see `src/systems/Progress.ts` below).
 
-(Wall tuples are `{x, y, w, h}`.)
+---
 
-Pinned by `levels.test.ts:26` (`length === 5`), `:28` (`LEVELS.length === 100`), `:40` (`TUTORIAL_LEVELS[0]` deep-equals the literal above), `:50` (`[3].name === 'Sacrifice'`), `:51` (`[4].walls.length === 7`).
+## `src/data/tutorialLevels.ts`
+
+| symbol | kind |
+|---|---|
+| `TUTORIAL_LEVELS` | const |
+
+```ts
+export const TUTORIAL_LEVELS: readonly Level[] = [ /* 5 entries, ids l1..l5 */ ];
+```
+
+Machine-written — **do not edit by hand**; regenerate with `npx vite-node scripts/genTutorialMazes.ts` from the repo root. Five small mazes from `src/core/MazeGen.ts`, each folding only the walls that teach its one thing, and each carrying `parPx` precomputed:
+
+| # | id | name | start | goal | walls (far half) | `parPx` | teaches |
+|---|---|---|---|---|---|---|---|
+| 1 | `l1` | First reflection | `{ x: 0.25, y: 0.92 }` | `{ x: 0.0833, y: 0.07 }` | 5 (1) | 1068 | one folded wall, and it is the lie: the near half shows a shortcut the reflection cannot take |
+| 2 | `l2` | Zigzag | `{ x: 0.0833, y: 0.92 }` | `{ x: 0.25, y: 0.07 }` | 6 (1) | 1127 | the walls beside consecutive gates alternate between the near half and the far one |
+| 3 | `l3` | Gate | `{ x: 0.0833, y: 0.92 }` | `{ x: 0.0833, y: 0.07 }` | 8 (1) | 1155 | a gate with one flank folded: the gap is only a gap on one side |
+| 4 | `l4` | Sacrifice | `{ x: 0.4167, y: 0.92 }` | `{ x: 0.4167, y: 0.07 }` | 7 (1) | 1214 | the fold closes the middle; the real route hugs the far-left edge, then swings back to the axis |
+| 5 | `l5` | Tangle | `{ x: 0.25, y: 0.92 }` | `{ x: 0.4167, y: 0.07 }` | 10 (2) | 1165 | all of the above, compounded |
+
+`difficulty()` measures 0.100, 0.111, 0.120, 0.129, 0.138: strictly rising, and below level 6's 0.148.
+
+It is a separate file so that importing a tutorial level does not pull in the ~600 KB `generatedLevels.ts`. `Daily.ts` imports it directly for that reason: the Daily Fold is the whole of the web build. If 200 daily candidates in a row fail the playability proof, which has never been observed, `dailyLevel()` serves `TUTORIAL_LEVELS[4]` under the date's id, with that level's `parPx`.
+
+Pinned by `levels.test.ts` › `ships 300 levels, tutorial first` (`length === 5`, `LEVELS[0].id === 'l1'`), `keeps the tutorial mazes exactly as generated` (`TUTORIAL_LEVELS[0]` deep-equals its literal; the five names in order), and `never steps backwards, from level 1 to level 300` (strictly rising from `l1` into `l6`).
 
 ---
 
@@ -784,7 +869,8 @@ See [02-coordinate-system.md](02-coordinate-system.md).
 |---|---|---|
 | `new Phaser.Game({...})` | `:10` | `type: Phaser.AUTO`, `parent: 'app'`, `backgroundColor: theme().paper`, `scale: { mode: FIT, autoCenter: CENTER_BOTH, width: BASE_WIDTH, height: BASE_HEIGHT }`, `input: { activePointers: 3 }`, `render: { antialias: true, roundPixels: false, powerPreference: 'high-performance' }`, `fps: { target: 60 }` |
 | scene order | `:36` | `[BootScene, MenuScene, LevelSelectScene, GalleryScene, GameScene]` — Boot runs first |
-| `refresh` | `:47` | `game.scale.refresh()`, bound to `resize`, `orientationchange`, `visualViewport` `resize`/`scroll`, plus fixed timeouts at `[50, 250, 600, 1200]` ms |
+| `refresh` | — | `game.scale.getParentBounds()` then `game.scale.refresh()`, bound to `resize`, `orientationchange`, `visualViewport` `resize`/`scroll`, fixed timeouts at `[50, 250, 600, 1200]` ms, and a `ResizeObserver` on `SafeArea.safeAreaBox()` |
+| `bannerLift` | — | how far `#app`'s bottom rises (`--fw-banner-lift`, CSS px) when `METRICS.bannerReserve` no longer covers the 50pt banner — canvas scale below 0.43; 0 on every iPhone |
 | dev handle | `:58` | Under `import.meta.env.DEV`: `window.game = game` and `window.foldwing = { renderShareCard }`. Tree-shaken out of `vite build` |
 
 `activePointers: 3` is load-bearing: Phaser allocates one touch Pointer by default, so the second hand reaching in during a 400 ms fail flash — while the drawing finger is still down — would find no free Pointer.
@@ -868,7 +954,7 @@ Depth constants (non-exported, `:25`): `level: 10, reveal: 15, mirror: 18, strok
 | `drawLevel` | Takes **pixel-space** geometry, not level space. Draws the dashed axis, walls (corner radius `min(METRICS.wallCornerRadius, w/2, h/2)`), the mirrored start/goal at `theme().reflectionAlpha`, then the real start/goal at alpha 1 |
 | `drawStroke` | Rebuilds both ribbons from the raw samples every call. `mirrorG` is forced to alpha 1 |
 | `flashFail` | `drawStroke(..., theme().fail)` plus a full-canvas wash at alpha `0.1` tweened to 0 over `METRICS.failFlashMs` |
-| `showReveal` | Paints `mirroredWalls` at `theme().fail, 0.16`, fades in over 220 ms, holds `durationMs`, fades out over 420 ms and clears |
+| `showReveal` | Paints `mirroredWalls` at `theme().fail, 0.6` (`REVEAL_ALPHA`), fades in over 220 ms, holds `durationMs`, fades out over 420 ms and clears |
 | `presentWin` | Clears any previous win and the live stroke, builds the figure, sets scale `METRICS.winSettleFrom`, tweens to 1 after `METRICS.winHoldMs` over `METRICS.winSettleMs` |
 | `destroy` | `clearWin()` then destroys all five Graphics objects |
 
@@ -1239,8 +1325,10 @@ export interface ButtonOptions {                   // :169
 export function tappable(
   container: Phaser.GameObjects.Container,
   w: number,
-  h: number
-): void;                                                                     // :27
+  h: number,
+  floor?: boolean,
+  cap?: number
+): () => number;
 
 export function roundRect(
   g: Phaser.GameObjects.Graphics,
@@ -1405,6 +1493,7 @@ State machine (file header `:4-10`):
 idle    --pointerdown within 2.4 × startRadius of start--> drawing
 drawing --segment collides--------------------------------> failed
         --pointerup before the goal------------------------> idle   (attempt ended, no penalty)
+        --canvas moved/resized (rotation, fold, Split View)-> idle   (as a lift; onCanvasMoved)
         --path enters the goal-----------------------------> won
 failed  --400ms red flash, auto-reset----------------------> idle
 won     --tap (after advanceReadyAt)-----------------------> next level / LevelSelect
@@ -1415,8 +1504,9 @@ Load-bearing details:
 - Collision is tested against `(prev, cursor)` — the **whole** segment, both sides — on every move (`:242`). Never against sampled points alone.
 - When one segment reaches both a wall and the goal, `goalT < hitT` decides which actually happened (`:249`).
 - The start-dot grab is tested against the **finger**, not the offset cursor (`:210`); the offset only exists once drawing begins. The stroke is then anchored on the dot itself, not under the finger (`:223`).
-- `advanceReadyAt = now + (METRICS.winHoldMs + METRICS.winSettleMs + 250)` and the "tap for the next fold" hint use the **same** `readyIn` number (`:359-363`) — when they drift, the player's first obedient tap does nothing.
-- The share pill carves itself out of the "tap anywhere = next" rule via `overSharePill` (`:194`).
+- `advanceReadyAt = now + (METRICS.winHoldMs + METRICS.winSettleMs + 250)` and the win prompt (`winPrompt`: "tap for the next fold", "tap to finish · come back tomorrow" on a Daily, "tap to finish" on level 300) use the **same** `readyIn` number — when they drift, the player's first obedient tap does nothing.
+- The share row carves itself out of the "tap anywhere = next" rule via `overSharePill`, and the win screen ignores board taps while a share is in flight and for `SHARE_QUIET_MS` (400) after it settles — the tap that dismisses iOS 26's undimmed share sheet reaches the page too.
+- Stroke samples are stamped with the input event's own time (`inputTime(pointer.downTime / moveTime)`), falling back to the frame time for a stamp more than 1 s off; never backwards.
 - The retry interstitial fires only from the fail timer's completion, with the board already reset (`:312-317`, `:444`), and only when `Ads.wouldShowOnAttempt` agrees on **both** axes.
 - Counters are spent only when an ad actually rendered (`:406`, `:451`), so a no-fill leaves the gate armed.
 - `bindDevKeys` (DEV only): number keys `1..LEVELS.length` jump to a level, `r`/`R` reloads, `m`/`M` returns to Menu.
@@ -1461,13 +1551,13 @@ export class MenuScene extends Phaser.Scene {
 }
 ```
 
-Private: `buildRevealChip(cx, y, figureCount)` (`:166`), `open(index)` (`:190`), `purchase()` (`:198`), `restore()` (`:207`).
+Since 1.4 also: `get sheetOpen(): boolean` (true while Settings, Store, Streak or
+Missions is up — the resize refit, the rollover and a warm reminder tap wait on it) and
+the registry keys `MENU_NOTICE`, `MENU_CELEBRATE`, `MENU_STREAK_FROM`.
 
-- `nextIndex = Math.min(Math.max(0, save.unlockedIndex), LEVELS.length - 1)` (`:44`) — belt and braces over the sanitising in `Progress.coerce`, because an out-of-range index throws inside `create()`, which leaves **no** scene running at all: a blank screen with nothing to press.
-- `resuming = nextIndex > 0 || save.totalWins > 0` (`:50`) is read from the same signal the button acts on. Reading it off `totalWins` alone made the button say "Play" and then open level 6 — the state a rewarded skip leaves.
-- The action stack is laid out from a fixed top via `place(h)` rather than hand-placed rows, and the geometry depends on the row count: `selling ? pt(325) : pt(355)` start, `rowGap = selling ? pt(7) : pt(11)`, `tallRow = pt(66)`, `row = pt(54)`. With a purchase to offer there are five rows, and the reveal chip **gives up its slot** so the stack still ends above `bannerReserve`.
-- `selling = Iap.available && !save.adsRemoved` (`:76`).
-- `purchase()` and `restore()` both call `this.scene.restart()` on success so the whole layout recomputes.
+- `nextIndex = Math.min(Math.max(0, save.unlockedIndex), LEVELS.length - 1)` — belt and braces over the sanitising in `Progress.coerce`, because an out-of-range index throws inside `create()`, which leaves **no** scene running at all: a blank screen with nothing to press.
+- `resuming = nextIndex > 0 || save.totalWins > 0` is read from the same signal the button acts on. Reading it off `totalWins` alone made the button say "Play" and then open level 6 — the state a rewarded skip leaves.
+- The layout is the pure `MenuLayout.menuLayout(footLine, floor)` — one layout for everyone. The 1.3 `selling` branch, which gave the reveal chip's slot to a Remove ads and a Restore row, is gone: the balance chip is always on the top bar, the Store is the third button beside Levels and Gallery, and Restore lives in Settings and the store's footer. See [06-scenes.md](06-scenes.md) §3.
 
 ---
 
@@ -1493,22 +1583,27 @@ async hideBanner(): Promise<void>;                                           // 
 wouldShowInterstitial(levelIndex: number, winsSinceAd: number): boolean;     // :175
 wouldShowOnAttempt(levelIndex: number, attemptsSinceAd: number): boolean;    // :193
 async showInterstitial(): Promise<boolean>;                                  // :211
-async showRewarded(placement: string): Promise<boolean>;                     // :250
+async showRewarded(placement: string): Promise<'earned' | 'declined' | 'unavailable'>;
+// added with LevelPlay:
+foregrounded(): void;                   // retry a failed SDK start on return to the foreground
+async openPrivacyOptions(): Promise<void>;  // Settings → Privacy choices
+get isTestAds(): boolean;               // always false — no build is safe to tap
+get privacyChoicesAvailable(): boolean;
 ```
 
-Private: `timingAllows(levelIndex)` (`:158`), `once(events, timeoutMs)` (`:285`). Private state: `ready`, `adsRemoved`, `bannerShown`, `bannerWanted`, `personalized`, `sessionStartedAt`, `lastInterstitialAt`, `mutedUntil`, `interstitialsThisSession`, `inFlight`.
+Line numbers above are AdMob-era. Private: `timingAllows(levelIndex)`, `underFullScreenAd(...)` (pauses the loop and music and hides the banner while a full-screen ad is up). AdMob's `once(events, timeoutMs)` and the `personalized` flag went with AdMob.
 
 | member | contract |
 |---|---|
-| `enabled` | `isNative() && adsConfigured() && !adsRemoved` — intrusive formats, suppressed by the purchase |
-| `rewardedAvailable` | `isNative() && adsConfigured()` — **stays true for owners**; opt-in rewarded helps the player and taking it away would punish whoever paid |
-| `init` | Initialises AdMob, runs ATT then UMP, sets `personalized = att.status === 'authorized' && consent.status !== REQUIRED`. Consent failures are swallowed, leaving `personalized = false` (non-personalised is the default, so a throwing consent call cannot silently start tracking people). Replays `showBanner()` if `bannerWanted` |
-| `showBanner` | `ADAPTIVE_BANNER` at `BOTTOM_CENTER`, `margin: 0`, `npa: !this.personalized`. Records `bannerWanted = true` and returns early if `!ready` — BootScene starts the menu without waiting on AdMob, so the menu's call usually lands before `initialize()` resolves |
-| `timingAllows` | `enabled` **and** `levelIndex >= interstitialFromLevel` **and** `interstitialsThisSession < maxInterstitialsPerSession` **and** session age `>= sessionWarmupSeconds` **and** `now >= mutedUntil` **and** time since last ad `>= minSecondsBetweenInterstitials` |
+| `enabled` | serving (native or mock, not ads-off, LevelPlay configured, consent not withheld) `&& !adsRemoved` — intrusive formats, suppressed by the purchase |
+| `rewardedAvailable` | serving `&& provider.supports('rewarded')` — **stays true for owners**; opt-in rewarded helps the player and taking it away would punish whoever paid. False on the web, in ads-off builds and when consent was withheld, so no "Watch an ad" offer is drawn where no ad can come |
+| `init` | *(LevelPlay.)* Called from `main.ts` once the opening film is gone. ATT, then the plugin's consent modal, then `getConsentData()`; only `GRANTED` starts the SDK (no consent means no SDK and no ads — AdMob's `personalized`/`npa` is gone). A failed start retries after 30/60/120 s and on every foreground. Replays `showBanner()` if `bannerWanted` |
+| `showBanner` | *(LevelPlay.)* Fixed 320×50 `BANNER` at `BOTTOM`. Records `bannerWanted = true` and returns early if the SDK is not up — the menu's call usually lands before consent has even been asked |
+| `timingAllows` | `enabled` **and** `levelIndex >= interstitialFromLevel` **and** `interstitialsThisSession < maxInterstitialsPerSession` **and** session age (foreground time only — `SessionClock`) `>= sessionWarmupSeconds` **and** `now >= mutedUntil` **and** time since last ad `>= minSecondsBetweenInterstitials` |
 | `wouldShowInterstitial` | `timingAllows && winsSinceAd >= interstitialEveryNWins`. Non-consuming predicate — the rating prompt asks first and yields |
 | `wouldShowOnAttempt` | `timingAllows && attemptsSinceAd >= interstitialEveryNAttempts`. **Both axes required.** Caller must only fire at a real transition, after the fail flash, never over it |
-| `showInterstitial` | Returns `true` only if an ad really rendered. Waits for `Dismissed`/`FailedToShow` with an **8000 ms** timeout — `showInterstitial()` alone resolves when the ad is *presented*, not closed. Increments the session counter and stamps `lastInterstitialAt` only on success |
-| `showRewarded` | Returns `true` only if the reward was earned. `Dismissed`/`FailedToShow` timeout is **60000 ms**. On earn, sets `mutedUntil = Date.now() + muteAfterRewardedSeconds * 1000`. `placement` is accepted and **discarded** (`void placement` at `:279`) — currently a documentation-only parameter |
+| `showInterstitial` | Returns `true` only if an ad really rendered. Takes a prefetched ad, resolves on *displayed*, then waits for the dismissal watcher (**180 s** ceiling — the AdMob-era 8 s timeout cut video ads off). Increments the session counter and stamps `lastInterstitialAt` only on a real impression; silence stamps the time floor only |
+| `showRewarded` | Returns `'earned' \| 'declined' \| 'unavailable'`. Earned **only** on the reward event, with an 800 ms grace after close for adapters that report close first. On earn, sets `mutedUntil = Date.now() + muteAfterRewardedSeconds * 1000` |
 
 `inFlight` guards both `showInterstitial` and `showRewarded` against overlap. Every method swallows its own errors: a no-fill, a network drop or a misbehaving creative must never break a level.
 
@@ -1531,8 +1626,15 @@ unlock(): void;                    // :47
 resetScale(): void;                // :68
 note(): void;                      // :73
 thud(): void;                      // :84
-chime(): void;                     // :133
+celebrate(medal: boolean): void;   // the win; taller with the medal
+pop(): void;                       // 1.4: a reward token landed
+reward(): void;                    // 1.4: a purchase, a chapter completed
+streakUp(): void;                  // 1.4: the streak went up
 ```
+
+`chime()` was removed in 1.4 (no callers); `scheduleChime` remains for the replay video.
+Each sound is an exported `schedule*(ctx, out, at)` function, rendered offline by the
+tests.
 
 Private: `tone(hz, seconds, peak, type: OscillatorType)` (`:143`), `ready(): boolean` (`:168` — `enabled && ctx !== null && ctx.state === 'running'`).
 
@@ -1544,7 +1646,9 @@ Module constants (non-exported): `PENTATONIC = [0, 2, 4, 7, 9]` (`:19`), `ROOT_H
 | `resetScale` | `step = 0`. Called when a level loads and on each `pointerdown` |
 | `note` | `ROOT_HZ * 2 ** (semitone(step)/12)` as a `triangle` at peak `0.16` for `0.55 s`, plus a quiet `sine` octave above at peak `0.045` for `0.32 s`. Increments `step` |
 | `thud` | `sine` from 150 Hz ramping to 58 Hz over 0.16 s, gain 0.3 decaying to 0.0001 by 0.22 s, plus a 0.05 s lowpassed (900 Hz) noise burst at 0.12. Not a buzzer — a buzzer is punishment, and this game asks you to fail dozens of times a minute |
-| `chime` | Semitones `[0, 4, 7]` above `ROOT_HZ * 2`, 90 ms apart, `sine`, peak 0.09, 0.9 s |
+| `pop` | sine 880 → 1320 Hz, 90 ms, peak 0.07 |
+| `reward` | C6 / E6 / G6 triangles, 60 ms apart, peak 0.07 |
+| `streakUp` | a 200 ms low-passed noise swell into a G5 triangle, peak 0.06 |
 
 Everything is synthesised rather than loaded: five notes and a thud as files would be five HTTP requests and a decode on a cold start that is currently under a second.
 
@@ -1559,74 +1663,109 @@ Everything is synthesised rather than loaded: five notes and a thud as files wou
 ```ts
 export const Haptics = new HapticsService();      // :47
 
-setEnabled(v: boolean): void;      // :20
-tick(): void;                      // :25   ImpactStyle.Light  — one obstacle safely passed
-thud(): void;                      // :30   ImpactStyle.Medium — the stroke died
-tap(): void;                       // :35   ImpactStyle.Light  — a button was pressed
+setEnabled(v: boolean): void;
+tick(): void;                      // ImpactStyle.Light  — one gate safely passed
+thud(): void;                      // ImpactStyle.Medium — the stroke died
+tap(): void;                       // ImpactStyle.Light  — a button was pressed
+land(): void;                      // 1.4: impact Light — the win figure has settled
+success(): void;                   // 1.4: notification Success — a medal, a purchase, the streak up, a chapter complete
+warn(): void;                      // 1.4: notification Warning — a locked card, the locked Daily
+select(): void;                    // 1.4: selection feedback — a Settings switch
+reward(): void;                    // 1.4: impact Light, throttled — a reward token landing
+export class BurstThrottle { constructor(minGapMs = 60, maxPerBurst = 3, quietMs = 300); allow(now: number): boolean }
 ```
 
-Private `impact(style)` (`:39`) no-ops unless `enabled && Capacitor.isNativePlatform()`, and swallows rejections.
+Every call no-ops unless enabled and native, and swallows rejections.
 
-**There is deliberately no win haptic.** The figure settling is a visual beat; a buzz would step on it, and the absence of feedback exactly where the player expects some is what makes the moment feel calm.
+**The win has one haptic now, and it waits.** 1.3 had none, on the reasoning that a buzz
+would step on the figure settling. `land()` fires when the figure has *settled*, the end
+of that beat rather than an interruption of it; a medal takes `success()` at its stamp
+instead.
 
 ---
 
 ## `src/systems/Iap.ts`
 
-| symbol | kind | file:line |
-|---|---|---|
-| `applyEntitlement` | function | `src/systems/Iap.ts:204` |
-| `Iap` | singleton (`StoreKitIapService`) | `src/systems/Iap.ts:197` |
-| `IapService` | interface | `src/systems/Iap.ts:33` |
-| `StoreProduct` | interface | `src/systems/Iap.ts:26` |
+Rewritten in 1.4.
+
+| symbol | kind |
+|---|---|
+| `applyEntitlement` | function |
+| `creditPurchase` | function — THE delivery path, StoreKit's and the fake store's |
+| `Iap` | singleton: `createMockIap(creditPurchase)` in a browser `VITE_ADS=mock` build, else `StoreKitIapService` |
+| `IapService` | interface |
+| `PurchaseResult` | type |
+| `RestoreResult` | type |
+| `RevealPack` | interface |
+| `restoreCancelled` | function |
+| `StoreProduct` | interface |
 
 ```ts
-export interface StoreProduct {          // :26
-  id: string;
-  title: string;
-  description: string;
-  priceString: string;
+export interface StoreProduct {
+  id: string; title: string; description: string;
+  priceString: string;   // localised; '' until the store answers
+  priceMicros: number;   // the same price in millionths; every "save N%" is computed from it
 }
+export interface RevealPack extends StoreProduct { count: number }   // a rung, or the starter
+export type RestoreResult = boolean | null | 'cancelled';
+export type PurchaseResult = 'bought' | 'cancelled' | 'pending' | 'failed';
 
-export interface IapService {            // :33
-  /** True when a purchase can actually be made right now. */
-  readonly available: boolean;
-  init(): Promise<void>;
+export interface IapService {
+  readonly available: boolean;           // a store to talk to: native, or the browser mock
+  readonly kind: 'storekit' | 'mock';
+  init(): Promise<void>;                 // no-op
+  warm(): Promise<void>;                 // open the store; shared, never throws
+  canPurchase(): boolean;
   removeAdsProduct(): StoreProduct | null;
-  /** @returns true if the entitlement is now owned. */
-  buyRemoveAds(): Promise<boolean>;
-  /** @returns true/false when authoritative, null when the store did not answer. */
-  restore(): Promise<boolean | null>;
+  revealPacks(): RevealPack[];
+  starterProduct(): RevealPack | null;
+  isPending(id: string): boolean;        // an Ask to Buy is waiting on it
+  buyRemoveAds(): Promise<PurchaseResult>;
+  buyRevealPack(id: string): Promise<PurchaseResult>;
+  buyStarter(): Promise<PurchaseResult>;
+  restore(): Promise<RestoreResult>;
 }
 
-export const Iap: IapService = new StoreKitIapService();          // :197
-
-export function applyEntitlement(storeSays: boolean | null): void {   // :204
-  if (storeSays === true) Progress.setAdsRemoved(true);
-}
+export function creditPurchase(productIds: readonly string[], txId: string,
+                               reason: 'purchase' | 'late-purchase'): boolean;   // true = may finish
+export function applyEntitlement(storeSays: boolean | null,
+                                 reason: 'purchase' | 'late-purchase' = 'purchase'): void;
 ```
 
-`StoreKitIapService` (`:46`) implementation notes:
-
-| member | line | behaviour |
-|---|---|---|
-| `available` | `:55` | `Capacitor.isNativePlatform()` — offered **without** having contacted the store |
-| `init` | `:62` | Deliberately a **no-op** |
-| `connect` (private) | `:83` | Opens the store once, only because the player asked. Registers `PRODUCT_ID` as `NON_CONSUMABLE` on `Platform.APPLE_APPSTORE`, wires `approved → grant() + t.finish()` and `verified → r.finish()` **before** `initialize()`, then initialises with `{ needAppReceipt: false }` |
-| `removeAdsProduct` | `:157` | `null` when not `available`; otherwise the fetched product or the placeholder `{ id: PRODUCT_ID, title: 'Remove ads', description: '', priceString: '' }` — the menu row renders fine without a price |
-| `buyRemoveAds` | `:163` | Orders the offer, then **reads `Progress.data.adsRemoved`** rather than trusting a return value: a cancel and a failure look identical here |
-| `restore` | `:180` | Returns `null` (not `false`) when `store.restorePurchases()` reports an error or throws — never downgrade an entitlement on a network blip |
-| `grant` (private) | `:192` | `Progress.setAdsRemoved(true)` if not already |
-
-`PRODUCT_ID = monetization.products.removeAds` (`:44`).
+`StoreKitIapService`: `connect()` (shared, lazy) registers all five products in ONE
+`store.register` call — Remove Ads NON_CONSUMABLE, the rungs and the starter
+CONSUMABLE — and wires `approved` / `pending` / `verified` **before**
+`initialize({ needAppReceipt: false })`. The approved handler credits through
+`creditPurchase` (per transaction id, `Progress.creditTransaction`), awaits
+`Progress.flush()`, and only then `finish()`es. `'late-purchase'` is any approval no
+`buy*` is waiting on. `PAYMENT_CANCELLED` from `order()` answers `'cancelled'` at once.
+A product StoreKit did not return is not listed. A setup error other than
+`INVALID_PRODUCT_ID` keeps `canPurchase()` true ("not reachable", not "payments off").
+Full account: [10-monetization.md](10-monetization.md) §7.
 
 Three decisions that must not be reverted:
 
 1. `needAppReceipt: false`. The Apple adapter verifies the app receipt on startup by default, and on a fresh install there is no receipt — so StoreKit shows a sign-in dialog over the home screen on cold launch. Verified on a clean simulator.
-2. `finish()` on approved transactions. An unfinished transaction is re-delivered on every launch, so the player keeps being shown a purchase they already completed.
-3. Granting inside the `approved` handler, not only inside `buyRemoveAds`, so a purchase completing after the app was killed mid-flow still lands on the next start.
+2. `finish()` on approved transactions — after the credit is on disk. An unfinished transaction is re-delivered, so the player keeps being shown a purchase they already completed; a finish before the write could lose one Apple considers delivered.
+3. Crediting inside the `approved` handler, once per transaction id, so a purchase completing after the app was killed mid-flow still lands — once — the next time the store opens.
 
 There is no receipt-validation server; an approved transaction is finished locally.
+
+### `src/systems/iapMock.ts` (1.4)
+
+```ts
+export type MockChoice = 'buy' | 'cancel' | 'fail' | 'pending';
+export type Deliver = (productIds: readonly string[], txId: string, reason: 'purchase' | 'late-purchase') => boolean;
+export interface PriceFixture { currency: string; removeAds: number; starter: number; packs: Record<number, number> }
+export const MOCK_PRODUCT_IDS: readonly string[];      // removeads, reveals10/20/30, reveals25
+export const MOCK_OWNED_KEY = 'foldwing.mockOwned';
+export const PRICE_FIXTURES: { usd; srb; gbr };
+export function createMockIap(deliver: Deliver, overrides?: Partial<MockEnv>): IapService;
+```
+
+The browser mock build's fake store: a DOM sheet "FAKE PURCHASE — no money"
+(`data-foldwing-mock="purchase"`, `data-action=buy|cancel|fail|pending`), switches
+`?iap=`, `?restore=`, `?prices=`. Refused by the release gates in every other bundle.
 
 ---
 
@@ -1669,10 +1808,16 @@ export interface SaveData {             // :38
   winsSinceAd: number;
   /** Failed attempts since the last interstitial actually rendered. */
   attemptsSinceAd: number;
-  /** True once the native review prompt has been spent. */
+  /** True once the native review prompt has been spent — on any version (kept for pre-1.4 builds). */
   ratePrompted: boolean;
   /** Every figure the player has ever drawn, newest last. */
   figures: SavedFigure[];
+  // … and, since August: version, daily, medals, foldSense, sound, music, haptics,
+  // reducedMotion, capability. Since 1.4, additively: bookmarks, bookmarked, lastRepair,
+  // missions, chapterMarks, starterBought, starterSeen, rewardedDay, rewardedToday,
+  // grantedTx, taught, reminders, nudgeAsks, nudgeAskedOn, sessionMinutes, lastSeen,
+  // playDays, ratePromptedVersion. The full interface and every coercion rule:
+  // 09-systems.md §1.2 and §1.5.
 }
 ```
 
@@ -1693,22 +1838,29 @@ addFigure(figure: SavedFigure): void;                                           
 get figures(): readonly SavedFigure[];                                                 // :206
 unlockThrough(levelIndex: number, totalLevels: number): void;                          // :211
 get reveals(): number;                                                                 // :220
-grantReveals(n: number): void;                                                         // :226
+grantReveals(n: number, reason: GrantReason = 'purchase'): boolean;                    // 1.4: refuses bad n and pre-load calls; announced
 spendReveal(): boolean;                                                                // :232
-setAdsRemoved(owned: boolean): void;                                                   // :238
+setAdsRemoved(owned: boolean, reason?: GrantReason): void;                             // 1.4: announced on a change
 installLifecycleFlush(): void;                                                         // :262
-async flush(): Promise<void>;                                                          // :289
-async reset(): Promise<void>;                                                          // :298   dev only
+async flush(): Promise<boolean>;                                                       // 1.4: true = written
+async reset(): Promise<void>;                                                          // dev only
 ```
 
-Private: `applyDailyTopUp()` (`:244`), `scheduleFlush()` (`:281`).
+Private: `scheduleFlush()`. `applyDailyTopUp(now?)` is public since 1.4 and returns what it
+paid. The rest of the 1.4 surface — `onGrant`, `takeUnshownGrants`, `creditTransaction`,
+the ad cap (`adRevealsLeft` / `canAdPay` / `payAdReveals`), the streak
+(`applyStreakGuard`, `repairStreak`, `dailyUnlocked`, …), `missionsToday`,
+`settleChapterMarks`, `snapshotForWin` / `settleWin`, `markSeen`, `teach` — is listed with
+its contracts in [09-systems.md](09-systems.md) §1.3. Exported types: `GrantReason`,
+`GrantEvent`, `GrantListener`, `StreakGuard`, `WinBefore`, `WinFacts`, `RewardLine`,
+`WinOutcome`, `Lesson`, `DailyResult`, and the pure `streakSets(save)`.
 
-Module-level (non-exported): `KEY = 'foldwing.save.v1'` (`:17`), `MAX_FIGURES = 120` (`:70`), `freshSave()` (`:72`), `coerce(raw)` (`:89`).
+Module-level (non-exported): `KEY = 'foldwing.save.v1'` (`:17`), `MAX_FIGURES = 120` (`:70`), `freshSave()` (`:72`), `coerce(raw)` (`:89`). Added since: `SCHEMA = 3`, `REAUTHORED_IN_V3 = {'l1', …, 'l5'}` and `idSurvives(version, id)`. `coerce` passes every `cleared`, `bestMs` and `medals` id through `idSurvives`: a pre-v2 save loses them all, and a v2 save loses `l1`–`l5` only, because schema 3 gave those ids the tutorial mazes. `version` is written back as `max(version, SCHEMA)`, never lowered. See [09-systems.md](09-systems.md) §1.5.
 
 | member | contract |
 |---|---|
 | `data` | The live state object, typed `Readonly`. Not a copy |
-| `load` | Never throws. A corrupt or absent save yields a fresh one — losing progress is bad, refusing to launch is worse. Applies the daily top-up before returning |
+| `load` | Never throws. A corrupt or absent save yields a fresh one — losing progress is bad, refusing to launch is worse. Applies the daily top-up, the streak guard and `markSeen` before returning |
 | `update` | `state = { ...state, ...patch }` then debounce a write. **Never awaited from the game loop** |
 | `figures` | Returns a reversed **copy** — newest first, the order a gallery reads in |
 | `reveals` | `Number.POSITIVE_INFINITY` when `adsRemoved` — unlimited reveals are the bundled perk that roughly doubles what the purchase is worth at no marginal cost |
@@ -1717,10 +1869,10 @@ Module-level (non-exported): `KEY = 'foldwing.save.v1'` (`:17`), `MAX_FIGURES = 
 | `unlockThrough` | Same clamped unlock without clearing — what a rewarded skip buys |
 | `addFigure` | Appends and trims to the last `MAX_FIGURES` (120). Every figure is kept, not just the best per level: the point of the gallery is that no two strokes are the same |
 | `installLifecycleFlush` | Idempotent. Binds `document.visibilitychange` (when hidden) and `window.pagehide` to cancel the timer and flush now. DOM events, not `@capacitor/app`, so it covers native and web without a native dependency |
-| `flush` | `Preferences.set(...)`, swallowing errors — a failed write must never surface as a crash mid-game |
+| `flush` | `Preferences.set(...)`, swallowing errors — a failed write must never surface as a crash mid-game — and reporting it: `false` before `load()` or on a failed write, which is what keeps a purchase unfinished until its credit is on disk |
 | `scheduleFlush` | 250 ms debounce |
 
-`freshSave()` defaults: `unlockedIndex: 0`, `bestMs: {}`, `cleared: []`, `reveals: monetization.reveals.startingStash` (2), `lastTopUp: ''`, `adsRemoved: false`, `totalWins: 0`, `winsSinceAd: 0`, `attemptsSinceAd: 0`, `ratePrompted: false`, `figures: []`.
+`freshSave()` defaults: `unlockedIndex: 0`, `bestMs: {}`, `cleared: []`, `reveals: monetization.reveals.startingStash` (2), `lastTopUp: ''`, `adsRemoved: false`, `totalWins: 0`, `winsSinceAd: 0`, `attemptsSinceAd: 0`, `ratePrompted: false`, `figures: []`; the later fields' defaults are in [09-systems.md](09-systems.md) §1.2.
 
 **`coerce` treats the save as untrusted input.** `typeof n === 'number'` accepts `NaN`, `Infinity`, `-5` and `1.5`; a negative or fractional `unlockedIndex` reached `LEVELS[i].name` in MenuScene and threw during `create()`, which leaves **no** scene running — a blank canvas with no button to press, and the bad save is never rewritten, so every relaunch dies the same way. The `count` helper (`:105`) requires `Number.isFinite` and applies `Math.max(min, Math.trunc(n))`. Figures whose `points`/`times` are not arrays, or whose points are not `{x: number, y: number}`, are dropped rather than allowed to kill the scene.
 
@@ -1730,20 +1882,37 @@ Lifecycle flush exists because writes are coalesced 250 ms: measured, a clear la
 
 ## `src/systems/Rate.ts`
 
-| symbol | kind | file:line |
-|---|---|---|
-| `Rate` | singleton (`RateService`) | `src/systems/Rate.ts:38` |
+Rewritten in 1.4: once per app version, only at a peak.
+
+| symbol | kind |
+|---|---|
+| `Rate` | singleton (`RateService`) |
+| `RATE_RULES` | const |
+| `RateWin`, `RateMoment`, `RateContext` | interfaces |
+| `isPeak` | function (pure) |
+| `shouldAskAt` | function (pure) |
 
 ```ts
-export const Rate = new RateService();      // :38
+export const RATE_RULES = { medalFromIndex: 9, streakFrom: 3, fromPlayDay: 2, struggleAttempts: 6 } as const;
+export interface RateWin { levelIndex: number | null; medal: boolean; todayDailyFirst: boolean; streakAfter: number; attempts: number }
+export interface RateMoment { adWillShow: boolean; quiet?: boolean; win: RateWin }
+export interface RateContext { version: string; promptedVersion: string; playDays: number; skipped: boolean; purchased: boolean }
+export function isPeak(win: RateWin): boolean;
+export function shouldAskAt(moment: RateMoment, ctx: RateContext): boolean;
 
-shouldAsk(adWillShow: boolean): boolean;    // :20
-async ask(): Promise<void>;                 // :28
+Rate.shouldAsk(moment: RateMoment): boolean;   // native only, not under the notification alert, then shouldAskAt
+Rate.ask(): Promise<void>;                     // writes ratePrompted + ratePromptedVersion, then requestReview()
+Rate.openStoreListing(): Promise<void>;        // the Settings row: the write-a-review page; spends nothing
 ```
 
-`shouldAsk` returns `false` off-native, `false` if `adWillShow`, `false` if `Progress.data.ratePrompted`, else `totalWins >= monetization.rate.firstPromptAfterWins` (6).
-
-`ask()` sets `ratePrompted: true` **before** calling `InAppReview.requestReview()`, and swallows the error. The OS gives no callback and throttles to roughly three prompts a year, so there is exactly one good ask and it has to land after a win — never after a failure, and never in the same beat as an ad. `GameScene.win` passes `Ads.wouldShowInterstitial(...)` as `adWillShow` (`src/scenes/GameScene.ts:368-374`) and delays the ask by `readyIn + 400` ms.
+`shouldAskAt` stands down for `adWillShow` or `quiet`, an unknown version or one
+already spent, fewer than 2 play days, a skip or a purchase this session, or 6+
+attempts on the level; otherwise it asks only when `isPeak`: a medal from level 10
+(index 9) on, or the first finish of today's Daily taking the streak to 3+. The version
+is `import.meta.env.VITE_APP_VERSION`, defined by `vite.config.ts` from the Xcode
+project's `MARKETING_VERSION`. The `ratePrompted` write keeps pre-1.4 builds from asking
+again. `GameScene.win` calls it with the win's facts and delays the ask by
+`readyIn + 400` ms. See [09-systems.md](09-systems.md) §5.
 
 ---
 
@@ -1779,6 +1948,8 @@ Private: `shareNative(req)` (`:51`), `shareWeb(req)` (`:75`). Module helpers (no
 ---
 
 ## `scripts/genLevels.ts`
+
+> Everything below is the bar-era script. Today `scripts/genLevels.ts` imports `makeCandidate` from `src/core/MazeGen.ts` (above) instead of defining its own, and writes 295 mazes, ids `l6`..`l300`.
 
 **No exports.** A top-level side-effect script: `npx vite-node scripts/genLevels.ts` writes `src/data/generatedLevels.ts` (`:448`) and prints a summary plus a difficulty-band table (`:450-467`). The `export const GENERATED_LEVELS` at `:443` is text **inside the emitted-file template literal**, not a declaration in this module.
 
@@ -1827,14 +1998,212 @@ Determinism: a fixed seed sequence means regenerating produces an identical file
 
 ---
 
+## `scripts/genTutorialMazes.ts`
+
+**No exports.** A top-level side-effect script: `npx vite-node scripts/genTutorialMazes.ts`, run from the repo root, writes `src/data/tutorialLevels.ts` whole and prints a table of what it chose. It is deterministic, because the whole search is a pure function of fixed seeds.
+
+It drives `MazeGen`'s stages directly: `carveMaze(rng(seed * 100 + C * 10 + R), C, R)`, a fold set, then `emitMaze(id, maze, 0.027, 0.021)` — the same pen as level 6. Per slot (`l1`..`l5`, three columns and three to five rows) it tries the fold sets that slot's lesson allows. A route analysis of the carved tree then accepts a candidate only if it teaches that lesson: the lie, the zigzag, the half-folded gate, the sacrifice, or all at once. Survivors must also be new layouts, be playable at `hitRadius + PLAYABLE_CLEARANCE`, and score below level 6's `difficulty()`. From those pools it picks the five that maximise the smallest difficulty step up to level 6, with the grid never shrinking. It re-proves the picks with the suite's own `difficulty()` and `validateLevel` before writing, and writes each level's `parPx` as its `routeArc` rounded.
+
+It does not write `scripts/genLevels.ts` or `generatedLevels.ts`, but it reads `GENERATED_LEVELS`: level 6's `difficulty()` is its ceiling, and its layouts must not repeat a generated one. So after regenerating the ladder, regenerate the tutorial too.
+
+---
+
+## The 1.4 modules
+
+Everything below arrived in 1.4. Signatures are abridged (parameter types where they
+are not obvious from the name); the rules are in [09-systems.md](09-systems.md) §6–§7
+and [10-monetization.md](10-monetization.md) §5–§7.
+
+### `src/core/Streak.ts` (pure)
+
+```ts
+export type Day = string;                                   // ISO local date
+export interface StreakConfig { bookmarkMax; bookmarkAt; bookmarkEvery; guardMinRun; overflowReveals; milestones; everyFiftyAfter100 }
+export interface RepairConfig { maxGapDays; cooldownDays; minRun }
+export function streakFrom(done: ReadonlySet<Day>, marked: ReadonlySet<Day>, today: Day): number;
+export function currentRunStart(done, marked, today): Day | null;
+export function longestFrom(done, marked): number;
+export function guardPlan(done, marked, today, bookmarks: number, minRun: number): { bridge: Day[] };
+export function repairDays(done, marked, today, lastRepair: Day | '', bookmarks: number, cfg: RepairConfig): Day[];
+export function repairable(…same…): Day | null;             // repairDays(…)[0] ?? null
+export function runBefore(done, marked, day: Day): number;
+export interface Milestone { day; reveals; bookmarks; title: string; body: string }
+export function milestoneFor(streak: number, bookmarksHeld: number, cfg: StreakConfig): Milestone | null;
+export function milestonesBetween(from: number, to: number, bookmarksHeld: number, cfg): Milestone[];
+export function nextMilestone(streak: number, bookmarksHeld: number, cfg): Milestone;
+export type WeekDot = 'done' | 'marked' | 'missed' | 'today-open' | 'today-done';
+export function weekStrip(done, marked, today): WeekDot[];  // last 7 days, oldest first
+```
+
+### `src/core/Missions.ts` (pure)
+
+```ts
+export type MissionId = 'daily' | 'wins3' | 'new2' | 'clean' | 'medal' | 'best';
+export interface MissionState { date: Day; ids: [MissionId, MissionId, MissionId]; progress: [number, number, number]; paid: [boolean, boolean, boolean] }
+export interface MissionCtx { unclearedCount: number; clearedCount: number }
+export interface WinEvent { daily; todayDailyFirst; firstClear; medal; deaths: number; beatBest; skipped: false }
+export const MISSION_TARGET: Record<MissionId, number>;
+export const MISSION_SLOTS: readonly (readonly MissionId[])[];   // [['daily'], ['wins3','new2'], ['clean','medal','best']]
+export function missionsFor(date: Day, ctx: MissionCtx): MissionState;
+export function advanceMissions(s: MissionState, e: WinEvent): { state: MissionState; completed: number[] };
+export function missionCopy(id: MissionId): { full: string; short: string };
+export function allMissionsDone(s: MissionState): boolean;
+```
+
+### `src/core/Rewards.ts` (pure)
+
+```ts
+export const CHAPTER_COUNT: number;                           // 15; CHAPTER_SIZE (20) is in src/data/levels.ts
+export const MARK_AT = [10, 20] as const; export type MarkAt = 10 | 20;
+export const MARK_PATTERN: RegExp;                            // /^(\d|1[0-4]):(10|20)$/
+export function chapterOf(levelIndex: number): number;       // 0..14
+export function chapterIndices(c: number): number[];
+export function chapterStats(cleared, medals, c: number, unlockedIndex?: number): { cleared: number; medals: number; skipped: number[] };
+export function dueMarks(cleared: ReadonlySet<string>, paid: ReadonlySet<string>): string[];   // "c:10" | "c:20"
+export function parseMark(mark: string): { chapter: number; at: MarkAt } | null;
+export function markReward(mark: string, cfg: { halfReward; fullReward }): number;
+```
+
+### `src/core/Rescue.ts`, `src/core/RouteProgress.ts` (pure)
+
+```ts
+export type RevealOfferKind = 'spend' | 'owner' | 'ad' | 'store';
+export interface LadderRules { revealAfter; skipAfter; skipAnywayAfter }        // GameScene: 3, 6, 9
+export function rescueOffer(s: LadderState, rules: LadderRules): 'reveal' | 'skip' | null;
+export function skipDrawnFree(drawn: boolean | null, rewardedAvailable: boolean, adsRemoved: boolean): boolean;
+export function rescueSpot(b: RescueBand): RescueSpot | null;                   // the band under the start dot
+export function ghostHeadLow(…): number | null;
+
+export function routeField(level: Level, pf: Playfield, opts?: RouteFieldOptions): RouteField | null;   // BFS from the goal
+export const NEAR_MISS_FLOOR = 0.2;
+export function nearMissLine(attempt: number, reached: number, bestBefore: number): string | null;    // "attempt 4 · furthest yet 74%"
+```
+
+### `src/systems/NudgePlan.ts` (pure) and `src/systems/Nudges.ts`
+
+```ts
+export interface NudgeState { now; dailyOpen; doneToday; streak; longest; bookmarks; lastDailyMs; sessionMinutes; adsRemoved; figures; chapter; resume }
+export type NudgeKind = 'ready-today' | 'saver-today' | 'ready+1' | 'saver+1' | 'lapse-2' | 'lapse-4' | 'lapse-8' | 'lapse-15' | 'lapse-30';
+export const NUDGE_IDS: Readonly<Record<NudgeKind, number>>;    // 8101..8109
+export const NUDGE_ID_FIRST = 8100, NUDGE_ID_LAST = 9099;
+export const DEFAULT_MINUTE = 1140, EARLIEST_MINUTE = 540, LATEST_MINUTE = 1230, SAVER_MINUTE = 1290,
+             QUIET_UNTIL = 510, QUIET_FROM = 1290, LEAD_MS = 60_000, STREAK_COPY_AT = 3, DAILY_ROUTE_MIN_INDEX = 5;
+export const SOFT_ASK_MAX = 3, SOFT_ASK_SPACING_DAYS = 7;
+export function reminderMinute(sessionMinutes: readonly number[]): number;   // median − 30, clamp 540..1230, round 15
+export function timeLabel(minute: number): string;                             // 1140 → "7 pm"
+export function planNudges(s: NudgeState): LocalNotificationSchema[];         // ≤ 8
+export function copyPool(kind: NudgeKind, s: NudgeState): Line[];
+export function routeForTap(extra: unknown, st: { doneToday; unlockedIndex; dailyUnlocked? }): 'daily' | 'menu';
+export function shouldSoftAsk(save, today: string, permission): boolean;
+export const LINES; export function lineFor(dayNumber: number); export function localDayNumber(d: Date): number; export function clock(ms: number): string;
+
+// Nudges.ts
+export type NudgePermission = 'granted' | 'denied' | 'prompt';
+export const PENDING_ROUTE = 'pendingRoute';
+export const REBUILD_DEDUPE_MS = 1000;
+export const Nudges: { available; promptPending; request(); warm(); permission(); rebuild(now?); clear(); clearDelivered();
+                       installTapListener(onTap?); takeRoute(now?); takePendingRoute(registry, now?); reminderTimeLabel();
+                       shouldSoftAsk(save, today, permission); devPlugin /* DEV web only */ };
+```
+
+`Nudges.schedule()` survives only as a deprecated alias of `rebuild()`; nothing calls it.
+
+### `src/render/StoreSheet.ts`
+
+```ts
+export type StoreRowKind = 'ad' | 'starter' | 'pack' | 'removeAds';
+export interface StoreOffer { kind; text; sub?; variant: 'primary' | 'secondary' | 'accent'; icon?; badge?; priced?; ready: boolean; press(): void }
+export interface StoreLanded { kind: 'reveals' | 'removeAds'; reveals: number; reason: 'rewarded' | 'purchase' | 'restore' }
+export interface StoreHooks { onChange(notice?: string, landed?: StoreLanded): void; onNotice(message: string, tone?: Tone): void; stillWanted?(): boolean }
+export function storeOffers(hooks: StoreHooks, now?: Date): StoreOffer[];
+export function earnReveal(hooks: StoreHooks): Promise<void>;                 // the 'reveal' placement
+export function restorePurchases(hooks: StoreHooks): Promise<RestoreResult>;
+export function grantNotice(g: GrantEvent): string | null;                    // a late purchase's line
+export function starterOnOffer(): boolean;
+export function storeSells(now?: Date): boolean;
+export function sheetModel(offers, now?): SheetModel; export function sheetIsEmpty(m: SheetModel): boolean;
+export function storeSheetLayout(spec): StoreSheetLayout;
+export const SHEET_TOP_LIMIT, SHEET_BOTTOM_LIMIT, WAITING_ALPHA;
+export function showStoreSheet(scene, o: { title; kind?: 'store' | 'refill'; hooks?; offers?; onClose; stillOpen }): Phaser.GameObjects.Container | null;
+```
+
+### The win card and the menu (`src/render/`)
+
+```ts
+// ResultCard.ts — pure parts
+export function verdictLine(ratio: number | null, medal: boolean): string;
+export function timeLine(ms: number, prevBestMs: number | null): { text: string; accent: boolean };
+export function dailyNumber(dateISO: string): number;                         // 2026-08-01 = #1
+export function chapterCells(…): CellState[];                                  // 'open' | 'cleared' | 'medal' | 'skipped'
+export function resultCardLayout(spec: ResultCardLayoutSpec): ResultCardLayout;
+export function frameScaleFor(o): number; export const MIN_FRAME_SCALE = 0.5;
+export class ResultCard { show(); setLive(on); hitsControl(x, y); relayout(place); stampMedal(); flipCount(); playChapter(); … }
+
+// DailyCard.ts
+export type DailyKind = 'locked' | 'fresh' | 'atRisk' | 'done' | 'broken' | 'repairable';
+export function dailyCardState(save: DailySave, today: Day, now: Date, unlocked?: boolean): DailyCardState;
+export function dailyCardFace(st): 'quiet' | 'wash' | 'filled';
+export function firstSession(save): boolean;
+export function streakChipState(save, today): StreakChipState;
+export function drawDailyCard(scene, x, y, st, onPress, o): Phaser.GameObjects.Container;
+
+// MenuLayout.ts
+export function menuLayout(footLine: number, floor: number): MenuLayout;     // rows, gaps, lift, tap caps
+export function footLineFor(bannerTop: number | null, perPoint: number): number;
+export function sheetToastY(cardTop: number, toastH: number): number;
+
+// StreakSheet.ts / MissionsSheet.ts
+export function streakSheetModel(save: StreakSave, today: Day, env: StreakSheetEnv): StreakSheetModel;
+export function milestoneReward(m: Milestone, owner: boolean): string;
+export function showStreakSheet(scene, o: StreakSheetOptions): Phaser.GameObjects.Container;
+export function missionRoute(id: MissionId): 'daily' | 'continue' | 'levels';
+export function missionRows(s: MissionState, owner: boolean): MissionRow[];
+export function showMissionsSheet(scene, o: MissionsSheetOptions): Phaser.GameObjects.Container;
+```
+
+### Shell, kit and renderer additions
+
+```ts
+// SafeArea.ts
+export function fitCanvas(box, baseWidth, baseHeight): CanvasBox;
+export function bannerLift(safe, reserve, baseWidth, baseHeight, bannerPt?, airPt?): number;
+export const DESK_MIN_PT = 40; export function wantsDesk(safe, lift, baseWidth, baseHeight): boolean;
+export function parseSafeParam(v: string | null | undefined): Insets | null;   // DEV ?safe=t,r,b,l
+export function applySafeOverride(insets: Insets | null, root?: HTMLElement): void;
+
+// Intro.ts / BootScene.ts
+export function skipIntro(): void;                   // a reminder tap never sits through the film
+export const bootRouted: () => boolean; export const entitlementKnown: Promise<void>;
+
+// UI.ts
+export type Tone = 'plain' | 'reward' | 'warn';
+export class ToastQueue<T extends ToastItem> { push(t); next(); size; clear() }   // cap 3, same tone replaces, one urgent slot
+export function toast(scene, text, opts?: { y?; icon?; tone?; holdMs?; urgent? }): void; export function clearToasts(scene): void;
+export function flyReward(scene, o: FlyOptions): void; export function countUp(scene, target, from, to, fmt?, dur?): void;
+export function pulse(scene, target, amt?): void; export function setRestScale(target, scale?): void;
+export function chip(scene, x, y, o: ChipOptions): Phaser.GameObjects.Container; export function tag(scene, x, y, text): Phaser.GameObjects.Container;
+export const flameGlyph, bookmarkGlyph, lockGlyph, checkGlyph, medalGlyph, plusGlyph: Glyph;   // button(): variant 'accent', opts.badge
+
+// Theme.ts
+InkTheme.medal / medalText / accentWash; export function inkCss(alpha: number, color?: number): string; export function motionReduced(): boolean;
+
+// InkRenderer.ts
+contactRing(at, mirror); flashWall(index, times?); showGhost(points, mirrorDeath?);
+creaseSweep(axisX, y0, y1); droplets(at); frameBoard(scale, pivot, dur); resetFrame(); get frameIsIdentity(): boolean;
+
+// CollisionSystem.ts
+export interface Hit { t: number; mirror: boolean; wall: number }            // firstHit now names the wall
+```
+
+---
+
 ## Global name → module index
 
 | symbol | module |
 |---|---|
 | `Ads` | `src/systems/Ads.ts:302` |
-| `admobUnits` | `src/config/monetization.ts:173` |
-| `adsConfigured` | `src/config/monetization.ts:182` |
-| `AdUnits` | `src/config/monetization.ts:38` |
+| `adsOff` / `adsMock` / `ADS_MARKER` | `src/systems/adProvider.ts` |
+| `levelplayConfigured` / `levelplayProvider` | `src/systems/providers/levelplay.ts` |
 | `applyEntitlement` | `src/systems/Iap.ts:204` |
 | `Audio` | `src/systems/Audio.ts:173` |
 | `BASE_HEIGHT` | `src/render/Theme.ts:31` |
@@ -1848,6 +2217,8 @@ Determinism: a fixed seed sequence means regenerating produces an identical file
 | `ButtonOptions` | `src/render/UI.ts:169` |
 | `CARD_SIZE` | `src/render/ShareCard.ts:28` |
 | `CardOptions` | `src/render/ShareCard.ts:30` |
+| `carveMaze` | `src/core/MazeGen.ts` |
+| `CarvedMaze` | `src/core/MazeGen.ts` |
 | `centredHitArea` | `src/render/HitArea.ts:37` |
 | `chaikin` | `src/core/StrokeRecorder.ts:168` |
 | `chaikinScalar` | `src/core/StrokeRecorder.ts:114` |
@@ -1867,6 +2238,7 @@ Determinism: a fixed seed sequence means regenerating produces an identical file
 | `distSq` | `src/core/Geometry.ts:46` |
 | `drawCursor` | `src/core/DrawCursor.ts:35` |
 | `DrawnStroke` | `src/core/StrokeRecorder.ts:205` |
+| `emitMaze` | `src/core/MazeGen.ts` |
 | `enter` | `src/render/UI.ts:349` |
 | `FONT` | `src/render/UI.ts:41` |
 | `GalleryScene` | `src/scenes/GalleryScene.ts:33` |
@@ -1891,6 +2263,9 @@ Determinism: a fixed seed sequence means regenerating produces an identical file
 | `LevelSelectScene` | `src/scenes/LevelSelectScene.ts:35` |
 | `lerpPoint` | `src/core/Geometry.ts:57` |
 | `liveBox` | `src/render/HitArea.ts:58` |
+| `makeCandidate` | `src/core/MazeGen.ts` |
+| `MAZE_BOTTOM` / `MAZE_TOP` | `src/core/MazeGen.ts` |
+| `MazeCandidate` / `MazeParams` / `MazeSeg` | `src/core/MazeGen.ts` |
 | `MenuScene` | `src/scenes/MenuScene.ts:30` |
 | `METRICS` | `src/render/Theme.ts:113` |
 | `mirrorPath` | `src/core/Geometry.ts:78` |
@@ -1899,6 +2274,7 @@ Determinism: a fixed seed sequence means regenerating produces an identical file
 | `monetization` | `src/config/monetization.ts:90` |
 | `paintedBox` | `src/render/HitArea.ts:49` |
 | `paintFigureInto` | `src/render/InkRenderer.ts:368` |
+| `paramsFor` | `src/core/MazeGen.ts` |
 | `PLAYABLE_CLEARANCE` | `src/core/LevelValidator.ts:310` |
 | `Playfield` | `src/core/Playfield.ts:19` |
 | `pointInRect` | `src/core/Geometry.ts:102` |
@@ -1917,6 +2293,7 @@ Determinism: a fixed seed sequence means regenerating produces an identical file
 | `ribbonOutline` | `src/core/Ribbon.ts:161` |
 | `RibbonOptions` | `src/core/Ribbon.ts:17` |
 | `RibbonQuad` | `src/core/Ribbon.ts:94` |
+| `rng` | `src/core/MazeGen.ts` |
 | `roundRect` | `src/render/UI.ts:93` |
 | `rule` | `src/render/UI.ts:302` |
 | `SaveData` | `src/systems/Progress.ts:38` |
@@ -1940,7 +2317,7 @@ Determinism: a fixed seed sequence means regenerating produces an identical file
 | `TextOptions` | `src/render/UI.ts:104` |
 | `theme` | `src/render/Theme.ts:94` |
 | `THEMES` | `src/render/Theme.ts:88` |
-| `TUTORIAL_LEVELS` | `src/data/levels.ts:21` |
+| `TUTORIAL_LEVELS` | `src/data/tutorialLevels.ts` (re-exported `src/data/levels.ts:5`) |
 | `TYPE` | `src/render/UI.ts:49` |
 | `ValidationResult` | `src/core/LevelValidator.ts:27` |
 | `validateLevel` | `src/core/LevelValidator.ts:52` |

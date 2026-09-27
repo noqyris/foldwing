@@ -11,8 +11,13 @@
  *      AFTER the figure has been shown and dismissed — never over it, because
  *      the figure is the reward and an ad chaser would spend the best moment in
  *      the game to sell the cheapest impression in it.
- *   2. THE MENU AND LEVEL SELECT. A banner lives here and only here. During play
- *      a banner would either eat the playfield or sit exactly under the thumb.
+ *   2. A BANNER, ALWAYS ON, IN EVERY SCENE — gameplay included. It is a native
+ *      view pinned to the bottom of the screen, and every scene keeps its strip
+ *      clear (METRICS.bannerReserve; the playfield's bottom inset clears it
+ *      too), so it covers paper margin and never the playfield or anything the
+ *      player can touch: a control under an ad is an accidental-click generator.
+ *      Shown once and left up across scene changes (Ads.showBanner); it comes
+ *      down only for Remove Ads or withdrawn consent.
  *   3. A VOLUNTARY ASK. Rewarded video, opt-in, reward named before the video.
  *
  * And the one placement that needs its constraints stated, because the naive
@@ -22,8 +27,8 @@
  *   in the game by an order of magnitude, which makes it look like the richest
  *   ad slot on the board. An attempt counter alone — "every 5th try" — would
  *   put an ad on screen roughly every 25 seconds on a level someone is stuck
- *   on, and AdMob policy explicitly forbids triggering an interstitial "every
- *   time a user clicks", with ad serving disabled over it. So the COUNT is only
+ *   on, and ad-network placement policies forbid an interstitial triggered on
+ *   every user action, with ad serving disabled over it. So the COUNT is only
  *   a permission and the CLOCK is the brake: `interstitialEveryNAttempts` AND
  *   `minSecondsBetweenInterstitials`, both, never either. `monetization.test.ts`
  *   pins the arithmetic so the count can never outrun the time floor.
@@ -33,94 +38,7 @@
  *   retention — it is a disabled ad account.
  */
 
-import { Capacitor } from '@capacitor/core';
-
-export interface AdUnits {
-  /** ca-app-pub-XXXX~NNNN — the tilde one. Goes in the NATIVE config, not here. */
-  readonly appId: string;
-  readonly banner: string;
-  readonly interstitial: string;
-  readonly rewarded: string;
-}
-
-/**
- * Google's official test units — serve real test ads with no account, and are
- * safe to tap. iOS and Android have different ones; using the iOS units on
- * Android is the classic silent no-fill bug.
- */
-const TEST_IOS: AdUnits = {
-  appId: 'ca-app-pub-3940256099942544~1458002511',
-  banner: 'ca-app-pub-3940256099942544/2934735716',
-  interstitial: 'ca-app-pub-3940256099942544/4411468910',
-  rewarded: 'ca-app-pub-3940256099942544/1712485313',
-};
-
-const TEST_ANDROID: AdUnits = {
-  appId: 'ca-app-pub-3940256099942544~3347511713',
-  banner: 'ca-app-pub-3940256099942544/6300978111',
-  interstitial: 'ca-app-pub-3940256099942544/1033173712',
-  rewarded: 'ca-app-pub-3940256099942544/5224354917',
-};
-
-/**
- * Live units for com.noqyris.foldwing — AdMob app "Foldwing: Mirror Puzzle",
- * publisher ca-app-pub-3307486877162157.
- *
- * These are real and verified against the console's ad-unit list, format by
- * format: putting the interstitial id in the banner slot is a silent no-fill
- * that looks exactly like "ads are broken".
- *
- * `appId` is duplicated in ios/App/App/Info.plist as GADApplicationIdentifier.
- * The two must always agree, and both must match `useTestAds`.
- */
-const LIVE_IOS: AdUnits = {
-  appId: 'ca-app-pub-3307486877162157~5033197766',
-  banner: 'ca-app-pub-3307486877162157/6426316277',
-  interstitial: 'ca-app-pub-3307486877162157/4373767928',
-  rewarded: 'ca-app-pub-3307486877162157/5113234608',
-};
-
-/**
- * Empty ON PURPOSE — there is no Play listing and therefore no Android AdMob
- * app to draw ids from. `adsConfigured()` reads the interstitial slot and
- * returns false for a blank one, so on Android every ad path no-ops cleanly
- * instead of firing requests that could only fail.
- *
- * Fill these in at the same moment the Play listing is created, not before: a
- * half-filled set is worse than an empty one, because `adsConfigured()` would
- * then report true and the requests would start failing for real.
- */
-const LIVE_ANDROID: AdUnits = {
-  appId: '',
-  banner: '',
-  interstitial: '',
-  rewarded: '',
-};
-
 export const monetization = {
-  /**
-   * Google's test units instead of the live ones. FALSE unless the build was
-   * explicitly asked for it, and there is no way to commit it true.
-   *
-   * A TestFlight build needs this. A new AdMob app shows "Requires review /
-   * Limited ad serving" until the app is PUBLIC on the store, so live units
-   * return no-fill and a tester sees blank space where the ads are — they
-   * cannot judge placement or frequency at all, which is the main thing worth
-   * judging before release. Test units render immediately.
-   *
-   * It is a BUILD-TIME env var, not a checked-in constant, because a checked-in
-   * constant is how build 19 came to carry Google's test ids inside a signed,
-   * uploadable ipa. `npm run ios:sync` cannot produce a test-ads build; only
-   * `npm run ios:sync:testads` can, and it leaves nothing behind on disk that a
-   * later archive could pick up by accident. See `fastlane beta_testads`.
-   *
-   * Shipping test ads to real users violates AdMob policy, and clicking your
-   * own LIVE ads is invalid traffic — the most common way to get an account
-   * banned. Both are prevented by the same property: the tree is always in
-   * submission state.
-   */
-  useTestAds: import.meta.env.VITE_TEST_ADS === '1',
-
   products: {
     /** Non-consumable. Kills the banner and interstitials, unlocks unlimited reveals. */
     removeAds: 'com.noqyris.foldwing.removeads',
@@ -179,10 +97,9 @@ export const monetization = {
      * This is HALF a gate. It is useless on its own and must never be used
      * without the time floor below, because a failed attempt in this game lasts
      * three to eight seconds: "every 5th attempt" alone would mean an ad every
-     * 25 seconds. AdMob's own policy forbids triggering an interstitial "every
-     * time a user clicks within the app" and warns that ad serving gets
-     * disabled for it, so the count is the permission and the clock is the
-     * brake. Industry practice is exactly this pair — minimum seconds AND
+     * 25 seconds. Ad-network placement policies forbid an interstitial
+     * triggered on every user action within the app and disable ad serving
+     * for it, so the count is the permission and the clock is the brake. Industry practice is exactly this pair — minimum seconds AND
      * minimum actions since the last ad, both required.
      *
      * Raised from 5 to 8 deliberately. A run of failures is a difficulty spike,
@@ -213,13 +130,17 @@ export const monetization = {
      * nothing at all from the players least likely to leave.
      */
 
-    /** No ad at all while the session is this young. Rewarded still works. */
+    /**
+     * No ad at all while the session is this young. Rewarded still works.
+     * Counted in time PLAYED — foreground only, see SessionClock — because a
+     * phone locked for twenty minutes has not warmed anyone up.
+     */
     sessionWarmupSeconds: 180,
 
     /** Floor between two interstitials for the rest of the first stretch. */
     minSecondsBetweenInterstitials: 180,
 
-    /** Once a session has run this long, the floor drops to the value below. */
+    /** Once a session has been PLAYED this long, the floor drops to the value below. */
     longSessionAfterSeconds: 600,
     lateSecondsBetweenInterstitials: 120,
 
@@ -230,17 +151,13 @@ export const monetization = {
      */
     maxInterstitialsPerSession: 8,
 
-    /**
-     * Away this long and the next launch counts as a NEW session: warm-up
-     * re-arms and the per-session cap resets.
-     *
-     * "Session" used to mean the lifetime of the process, so a phone that sat
-     * in a pocket all afternoon came back with the cap already spent and never
-     * showed another ad until the app was force-quit — while a player who
-     * merely checked a message lost their warm-up grace. Thirty minutes is the
-     * usual line between "still the same sitting" and "came back later".
+    /*
+     * What a SESSION is — and so when the cap above resets and the warm-up
+     * re-arms — is not a knob here. It is the app's one rule, core/Session
+     * (SESSION_GAP_MS): a cold launch, a return after 30 minutes or more, or a
+     * return into a new day. This config used to hold the 30 minutes as
+     * `newSessionAfterAwaySeconds`, read by two private copies of the rule.
      */
-    newSessionAfterAwaySeconds: 1800,
 
     /** After a volunteered rewarded view, stop taxing them for a while. */
     muteAfterRewardedSeconds: 300,
@@ -267,10 +184,58 @@ export const monetization = {
     offerSkipAfterAttempts: 6,
   },
 
-  rate: {
-    /** Ask at a delight peak, once, and never alongside an ad. */
-    firstPromptAfterWins: 6,
+  /**
+   * THE FAUCETS. Every way a reveal arrives that is not a purchase, sized
+   * together because they only make sense together (monetization.test.ts pins
+   * the sums).
+   *
+   * The rule behind the numbers: an engaged player who never pays and never
+   * watches an ad should still gain a few reveals a day — enough that the
+   * currency is something they have, not something they are denied — and
+   * never as many as the smallest pack holds. A day's free supply that matched
+   * a pack would make the pack a thing nobody needs.
+   */
+  economy: {
+    /**
+     * Ad-paid reveals per local day, across every placement that pays reveals
+     * (the store row, the refill, the three-death offer, the chapter doubler).
+     * The skip and the streak repair are rescues, not currency, and are not
+     * counted. Without a cap an ad is a better deal than every pack, forever.
+     */
+    rewardedRevealsPerDay: 5,
+    /** Three a day, slot one always the Daily; each pays itself on completion. */
+    missions: { count: 3, reward: 1, unlockAfterIndex: 5 },
+    /** Halfway and complete. Skipped levels do not count toward either mark. */
+    chapter: { size: 20, halfReward: 1, fullReward: 2 },
+    streak: {
+      /** Bookmarks held at most; each covers one missed day of a run ≥ guardMinRun. */
+      bookmarkMax: 2,
+      /** Streak days that earn a bookmark, besides every `bookmarkEvery`th. */
+      bookmarkAt: [3],
+      bookmarkEvery: 7,
+      guardMinRun: 2,
+      /** What a bookmark earned at the cap pays instead. */
+      overflowReveals: 1,
+      /** Reveals paid on the day the streak reaches each of these. */
+      milestones: { 7: 2, 14: 3, 30: 5, 50: 5, 100: 10 },
+      everyFiftyAfter100: 5,
+    },
+    /** One missed day, a run worth keeping, and not a habit. */
+    repair: { maxGapDays: 1, cooldownDays: 14, minRun: 2 },
+    /**
+     * The starter pack reuses the one product never sold, whose id already
+     * names its count — ids are permanent, so no new one is minted for it.
+     * Sold once per install, and only after the game has had five wins to
+     * earn the ask.
+     */
+    starter: { id: 'com.noqyris.foldwing.reveals25', count: 25, afterWins: 5 },
   },
+
+  /**
+   * The win card's board frame: how far the maze shrinks to make room for the
+   * result. Setting either to 1 turns the move off without touching code.
+   */
+  ui: { winFrameScale: 0.74, winFrameScaleDaily: 0.7 },
 } as const;
 
 /** What a store row needs to work out whether it is a better deal. */
@@ -303,16 +268,74 @@ export function packSaving(base: PricedPack, pack: PricedPack): number | null {
   return saved > 0 ? saved : null;
 }
 
-const isAndroid = (): boolean => Capacitor.getPlatform() === 'android';
+type IdPack = PricedPack & { readonly id: string };
 
-/** The unit set actually in force, resolved at call time so tests can vary it. */
-export function admobUnits(): AdUnits {
-  if (monetization.useTestAds) return isAndroid() ? TEST_ANDROID : TEST_IOS;
-  return isAndroid() ? LIVE_ANDROID : LIVE_IOS;
+const priced = (p: PricedPack): boolean => p.priceMicros > 0 && p.count > 0;
+const unit = (p: PricedPack): number => p.priceMicros / p.count;
+
+/**
+ * The rungs worth selling in THIS storefront, smallest first.
+ *
+ * The dollar ladder is honest, but Apple's tiers are not proportional across
+ * currencies: in Serbia the 20-pack and the 30-pack are both €1.99, and in the
+ * UK the 10-pack and the 20-pack are both £0.99. Shown as-is, one row there
+ * sells fewer reveals for the same money as the row beside it — a trap for
+ * whoever does not do the arithmetic, on a screen that exists to be trusted.
+ * The ids are permanent, so the fix is at runtime: drop every rung another
+ * rung dominates (as many or more for as little or less), then keep only rungs
+ * whose price per reveal strictly falls as they grow.
+ *
+ * Unpriced (the store has not answered) returns the list untouched: rows show
+ * as waiting, and nothing is judged on a price that is not there.
+ */
+export function sellableLadder<T extends IdPack>(packs: readonly T[]): T[] {
+  if (!packs.every(priced)) return [...packs];
+
+  const undominated = packs.filter(
+    (a, i) =>
+      !packs.some(
+        (b, j) =>
+          j !== i &&
+          b.count >= a.count &&
+          b.priceMicros <= a.priceMicros &&
+          // Identical rungs: the first one stands, so exactly one survives.
+          (b.count > a.count || b.priceMicros < a.priceMicros || j < i)
+      )
+  );
+
+  const kept: T[] = [];
+  for (const p of [...undominated].sort((a, b) => a.count - b.count)) {
+    const last = kept[kept.length - 1];
+    if (!last || unit(p) < unit(last)) kept.push(p);
+  }
+  return kept;
 }
 
 /**
- * False until real unit ids exist for THIS platform — every ad path then no-ops
- * cleanly rather than firing requests that can only fail.
+ * The rung that earns a BEST VALUE tag, if any does.
+ *
+ * Only among two or more rungs (a lone row is not "best" of anything), and only
+ * when it saves at least 15% on the smallest shown rung: a badge on a 4% saving
+ * is a claim the arithmetic does not support.
  */
-export const adsConfigured = (): boolean => admobUnits().interstitial.length > 0;
+export function bestValueId(kept: readonly IdPack[]): string | null {
+  if (kept.length < 2 || !kept.every(priced)) return null;
+  const base = kept.reduce((a, b) => (b.count < a.count ? b : a));
+  const best = kept.reduce((a, b) => (unit(b) < unit(a) ? b : a));
+  if (best === base) return null;
+  const saving = packSaving(base, best);
+  return saving !== null && saving >= 15 ? best.id : null;
+}
+
+/**
+ * Whether the starter is honestly a deal here: cheaper per reveal than every
+ * rung on sale. At $1.49 it became €1.99 — the same money as thirty reveals
+ * for twenty-five — so the check is on the prices the store returned, never on
+ * the dollar plan. False when anything is unpriced, or when no rung is on sale
+ * (the store returned the starter and no pack): "save 60%" cannot be said
+ * about a number nobody has seen, nor against nothing.
+ */
+export function starterWorthShowing(starter: PricedPack, kept: readonly PricedPack[]): boolean {
+  if (kept.length === 0 || !priced(starter) || !kept.every(priced)) return false;
+  return kept.every((p) => unit(starter) < unit(p));
+}

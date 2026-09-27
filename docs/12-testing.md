@@ -3,11 +3,13 @@
 >
 > This page describes the retired **100-level set of bar obstacles** and the
 > generator that produced it. Neither still exists. The game now ships 300
-> levels — five hand-authored and 295 spanning-tree mazes built by
-> `src/core/MazeGen.ts`, which is also what the Daily Fold runs on the phone —
-> so every level count below is wrong, and any passage about wall placement,
-> interlock reservation or inert-wall stripping describes code that was
-> deleted with the bar set.
+> spanning-tree mazes built by `src/core/MazeGen.ts`, which is also what the
+> Daily Fold runs on the phone — so every level count below is wrong, and any
+> passage about wall placement, interlock reservation or inert-wall stripping
+> describes code that was deleted with the bar set. The tutorial went too: the
+> five hand-authored bar levels, LOCKED wherever they appear below, were
+> replaced in September 2026 by five small mazes from
+> `scripts/genTutorialMazes.ts`, and save schema 3 forgets clears of the old ones.
 >
 > The "Source files" line-count tables are wrong too, and that matters more
 > than it looks: the `file:line` citations throughout were counted against
@@ -16,6 +18,12 @@
 >
 > Kept because the reasoning is still worth having. For what the game actually
 > does now, see [../README.md](../README.md).
+>
+> **1.4 (September 2026)** roughly quadrupled the suite: 50 spec files, most of the
+> new ones pinning the economy, the store, the reminders and the pure layout of the
+> new screens (§7). The browser QA that drove 1.4 through the real game is **not in the
+> repo** — §8 says what it was and how to rebuild it — and the DEV switches it leaned on
+> are listed there. The monetization numbers in §5 are brought up to date.
 
 ---
 
@@ -23,8 +31,9 @@
 
 ## What this covers
 
-The entire automated safety net: 11 spec files, 506 tests, run by Vitest 2.1.9 in
-the `node` environment. Which invariant each suite pins, where the fuzz/property
+The entire automated safety net: 11 spec files and 506 tests when this page was
+written, 50 spec files since 1.4 (`npx vitest run` prints the real count), run by
+Vitest in the `node` environment. Which invariant each suite pins, where the fuzz/property
 tests live and how many cases they really run, what the 100-level re-proof costs
 in wall time, and — at the end — the large untested surface (all scenes, all
 renderers, all native bridges) so a model knows exactly where it is flying blind.
@@ -35,16 +44,24 @@ renderers, all native bridges) so a model knows exactly where it is flying blind
 | --- | --- | --- |
 | `src/core/Geometry.test.ts` | 435 | Primitive geometry; the segRect ↔ segRectEntryT cross-proof |
 | `src/core/StrokeRecorder.test.ts` | 329 | Sampling threshold, Chaikin, densify, render-vs-collision bound |
-| `src/data/levels.test.ts` | 262 | 100-level solvability + playability re-proof, difficulty ramp |
+| `src/data/levels.test.ts` | — | 300-level solvability + playability re-proof, difficulty ramp, the tutorial-maze pin, fingerprints of levels 6–300 and of the Daily Fold |
+| `src/systems/Progress.test.ts` | — | Hostile saves, the v1→v2 and v2→v3 save migrations, bounded storage, reveals, the daily ledger and streak |
 | `src/core/Ribbon.test.ts` | 168 | Speed→width profile, quad/disc tessellation |
 | `src/core/CollisionSystem.test.ts` | 134 | Own-side + mirrored-side blocking, `firstHitT` |
 | `src/core/Playfield.test.ts` | 134 | Normalized→screen mapping, the soft wall at the axis |
 | `src/render/Theme.test.ts` | 140 | LOCKED palette and `METRICS` constants |
-| `src/config/monetization.test.ts` | 109 | AdMob id shapes, plist agreement, ad-cadence arithmetic |
+| `src/config/monetization.test.ts` | — | Native project free of Google ad identifiers, ATT + SKAdNetwork + consent-provider keys, ad-cadence arithmetic, reveal packs |
+| `src/systems/providers/levelplay.test.ts`, `src/systems/adProvider.test.ts`, `src/systems/adsMock.test.ts` | — | LevelPlay ids per platform, consent before the SDK, the reward race, prefetch, the build-mode markers, no TEST ADS badge |
 | `src/data/quality.test.ts` | 94 | No inert wall, no duplicate layout, no hairline geometry |
 | `src/render/HitArea.test.ts` | 73 | Phaser hit-rect regression (buttons live over their whole face) |
 | `src/core/DrawCursor.test.ts` | 118 | Touch cursor lift, distance-gated ramp |
-| `vite.config.ts` | 21 | Vitest config lives here (`test.environment`, `test.include`) |
+| `src/core/{Streak,Missions,Rewards,Rescue,RouteProgress}.test.ts` | — | 1.4: streak through bookmarks and repair, the day's missions, chapter marks, the rescue ladder and its pill band, the near-miss distance field |
+| `src/systems/{Iap,iapMock,Rate,NudgePlan,Nudges,Haptics}.test.ts` | — | 1.4: the store's credit-once path, the fake store, the review rule, the reminder plan and the never-prompting service, the reward-tap throttle |
+| `src/systems/{Ads,adsLevelplay,Audio,Share,Music,GameCenter,Daily}.test.ts` | — | Paired since this page was written, before 1.4: the ad policy, the synthesised sounds, the share pipeline, Game Center, the Daily |
+| `src/systems/SessionClock.test.ts` | — | The ad session's age counts foreground time only: an absence pauses it, `start()` (a new session) puts it back at zero; a start in the background, repeated hide/show events and a clock set back |
+| `src/core/Session.test.ts`, `src/systems/SessionLifecycle.test.ts`, `src/systems/SessionScope.test.ts` | — | What counts as a session: ≥ 30 min from the FIRST hide, or a new local day; a visible without a hide and a clock set back are not pauses; the persisted count, the first-session lift, listeners, the ATT starter gate (film gone, then app active, re-checked after registering) and `main.ts`'s wiring; and what no session listener may touch — the save, the daily rewarded cap and the every-Nth counters included. Every rule mutation-checked — see [09-systems.md](09-systems.md) §8 |
+| `src/render/{StoreSheet,ResultCard,DailyCard,MenuLayout,StreakSheet,MissionsSheet,SafeArea,UI.toast,InkRenderer}.test.ts`, `src/scenes/{LevelSelectScene,GalleryScene}.test.ts` | — | 1.4: the pure models and layouts behind every new screen (Phaser mocked where a module imports it) |
+| `vite.config.ts` | — | Vitest config lives here (`test.environment`, `test.include`, `test.env.TZ`) |
 | `package.json` | 38 | `test` / `test:watch` / `typecheck` scripts |
 
 ---
@@ -58,21 +75,31 @@ npm run typecheck  # tsc --noEmit            — not part of vitest
 npm run build      # tsc --noEmit && vite build — typecheck gates the build
 ```
 
-There is **no `vitest.config.ts`**. Config is inlined in `vite.config.ts:15-20`:
+There is **no `vitest.config.ts`**. Config is inlined in `vite.config.ts`:
 
 ```ts
 test: {
   environment: 'node',
   include: ['src/**/*.test.ts'],
+  env: { TZ: 'Europe/Belgrade' },
 },
 ```
 
+The zone is pinned on purpose: the Daily, the free reveal, the streak and the reminder
+plan roll over at LOCAL midnight, and on a UTC runner the tests that catch a UTC slip
+pass vacuously. Belgrade also has DST (2026-10-25), which the streak and reminder tests
+cross. The same file's `define` sets `VITE_APP_VERSION` for the suite too, so
+`Rate.test.ts` can pin it to the Xcode project's `MARKETING_VERSION`.
+
 Consequences:
 
-- `environment: 'node'` — there is no DOM, no `window`, no canvas. **Phaser is
-  never imported by any test.** Any module that transitively imports `phaser`
-  is therefore untestable as written; that is why `src/core/*` and
-  `src/render/{Theme,HitArea}.ts` are Phaser-free and everything else is not.
+- `environment: 'node'` — there is no DOM, no `window`, no canvas. **The real
+  Phaser is never imported by any test** (it cannot load in node). That is why
+  `src/core/*` and the pure layout and model functions are Phaser-free, and why
+  the 1.4 suites for modules that do import it — `UI.toast`, `StoreSheet`,
+  `ResultCard`, `DailyCard`, `StreakSheet`, `MissionsSheet`, `InkRenderer`, the two
+  scene tests — replace `phaser` with a `vi.mock` stub and test only the exported
+  pure parts. Nothing in the suite draws.
 - `include` is `src/**/*.test.ts` only — `scripts/genLevels.ts` is not covered.
 - `src/config/monetization.test.ts:11` does `readFileSync('ios/App/App/Info.plist')`
   with a **CWD-relative path**. Vitest must be launched from the repo root or
@@ -277,15 +304,18 @@ corridor is never flagged.
 | Manufactured motion ≤ `min(2×travel, offsetY)` | Bounds how much the cursor can move that the finger did not | `never lifts the cursor further than the finger has travelled, plus the offset` | `src/core/DrawCursor.test.ts:110` |
 | `BASE_WIDTH/BASE_HEIGHT < 0.5626` | Tall phones must letterbox into paper, not pillarbox and steal the mirror's width | `is a fixed 9:16 portrait logical space` | `src/render/Theme.test.ts:20` |
 | Palette hex values are the spec's, exactly | `paper 0xe9ebe4`, `ink 0x16323c`, `wall 0x9a9c90`, `accent 0x8e3b62`, `fail 0xb4463c` | `matches the spec, exactly` | `src/render/Theme.test.ts:37` |
-| Hand-authored tutorial level 1 is byte-for-byte frozen | **LOCKED** — the generator appends, it must never rewrite these | `keeps the hand-authored numbers exactly as tuned` | `src/data/levels.test.ts:38` |
-| Set is exactly 5 tutorial + 95 generated = 100, `LEVELS[0].id === 'l1'` | Level-select UI, progress keys and store copy all assume 100 | `ships 100 levels, tutorial first` | `src/data/levels.test.ts:25` |
+| Tutorial maze `l1` deep-equals its generated literal; the five names are `First reflection`, `Zigzag`, `Gate`, `Sacrifice`, `Tangle` | The tutorial is generated by `scripts/genTutorialMazes.ts` from `MazeGen` (it replaced the LOCKED hand-authored bars in September 2026). A `MazeGen` change that would silently re-carve the player's first maze fails here | `keeps the tutorial mazes exactly as generated` | `src/data/levels.test.ts` |
+| Set is exactly 5 tutorial + 295 generated = 300, `LEVELS[0].id === 'l1'` | Level-select UI, progress keys and store copy all assume 300 | `ships 300 levels, tutorial first` | `src/data/levels.test.ts:57` |
+| Every id equals its position, `l${i + 1}` | The save keys `cleared` / `bestMs` / `medals` by id but unlocks by index; the schema-3 migration relies on the two meaning the same | `keys every level by its position, because the save stores ids` | `src/data/levels.test.ts` |
+| sha256 of `GENERATED_LEVELS` is fixed, and `LEVELS.slice(5)` is that array | Levels 6–300 must not move under a `MazeGen` refactor: saved clears would land on different mazes | `keeps levels 6 to 300 byte-identical to the shipped set` | `src/data/levels.test.ts` |
+| sha256 of 60 consecutive Daily Folds (from 2026-09-01) is fixed | Two phones on one date must get one puzzle, before and after any `MazeGen` change | `keeps every Daily Fold identical to the one players already had` | `src/data/levels.test.ts` |
+| A v2 save forgets `cleared` / `bestMs` / `medals` for `l1`–`l5` only — exact ids, never a prefix, and only once — and keeps `unlockedIndex`, figures and everything not keyed by a level id | Save schema 3 gave `l1`–`l5` new content. Without it an upgrading player sees mazes they never played marked cleared, with bar-era best times on them | `the v2 to v3 migration: the tutorial became mazes` (11 cases) | `src/systems/Progress.test.ts:311` |
 | Every level solvable against the **shipped** playfield + collision | An unsolvable level is invisible until someone wastes an evening on it | `level %i (%s "%s") is solvable` | `src/data/levels.test.ts:113` |
 | Every level solvable with `hitRadius + 6` | Solvable ≠ playable; a corridor 2 px wider than the ink is undrawable | `level %i (%s "%s") leaves room for the hand` | `src/data/levels.test.ts:140` |
 | Tightest level's clearance ∈ `[6, 18)` | Floor keeps it playable; ceiling proves `clearance` still discriminates | `measures real slack on the tightest level, not just a pass` | `src/data/levels.test.ts:155` |
 | Every generated level has `interlock > 0.05` | Without overlap the level decomposes into "clear this, then that" and the mirror is decoration. Build 5 shipped with 98/100 at zero interlock | `makes every generated level squeeze from both halves at once` | `src/data/levels.test.ts:182` |
-| Tutorial 1–4 have `interlock === 0`; level 5 `> 0.1` | Deliberate exemption: teach one constraint at a time, then combine | `teaches one half at a time first, then puts them together` | `src/data/levels.test.ts:189` |
 | Mean generated interlock `> 0.2` | Stops a regression that clears the per-level bar by a hair on all 95 | `keeps the set substantially interlocked, not just past a threshold` | `src/data/levels.test.ts:196` |
-| `difficulty` is non-decreasing across all 95 generated levels | The sort key is `difficulty`, **not** `pressure` — sorting by pressure ordered by how busy levels *looked* and left mirror demand at rho −0.057 | `never steps backwards within the generated set` | `src/data/levels.test.ts:222` |
+| `difficulty` never steps backwards from level 1 to level 300, and rises **strictly** from `l1` through `l6` | The sort key is `difficulty`, **not** `pressure` — sorting by pressure ordered by how busy levels *looked* and left mirror demand at rho −0.057. The bar tutorial was exempt and stepped backwards twice, once into level 6; the tutorial mazes are chosen to rise into it (0.120 → 0.143, level 6 at 0.148). The old `interlock === 0` pin on tutorial 1–4 went with the bars | `never steps backwards, from level 1 to level 300` | `src/data/levels.test.ts:301` |
 | No 10-level band tightens by more than 45 % | A jump from 25 px slack to 13 px reads as the game breaking. That shipped once | `has no cliff — no ten-level band doubles the precision demand` | `src/data/levels.test.ts:246` |
 | Last-20 clearance `< 0.6 ×` first-20; last-20 `interlockBands > 1.4 ×` first-20 | The ramp must raise precision *and* mirror demand, not just wall count | `ramps the two axes that matter, not just the wall count` | `src/data/levels.test.ts:230` |
 | `pressure(LEVELS[0]) < 0.12`, `pressure(LEVELS[99]) > 0.4` | Opens gently, ends demanding | `opens gently and ends demanding` | `src/data/levels.test.ts:258` |
@@ -296,50 +326,60 @@ corridor is never flagged.
 | Every wall `w > 0.02` and `h > 0.02` normalized | Level-select previews draw walls a few px tall; a sliver looks like a rendering bug | `keeps every wall thick enough to read at card size` | `src/data/quality.test.ts:84` |
 | Live hit area == painted area for centred buttons | The shipped build used `Rectangle(-w/2, -h/2, w, h)` and buttons responded on ~25 % of their face | `${c.name} responds over its whole face` (4 cases) | `src/render/HitArea.test.ts:20` |
 | Fixed hit area does not overhang the neighbour above | The old bug let Gallery steal taps meant for Levels | `overhung its neighbour, stealing taps meant for the button above` | `src/render/HitArea.test.ts:60` |
-| Native `GADApplicationIdentifier` == `admobUnits().appId` and matches `useTestAds` | Live app id + Google test units (or the reverse) is an AdMob policy violation; the plist is edited by hand and cannot follow the TS flag | `keeps the native app id in step with useTestAds` | `src/config/monetization.test.ts:45` |
-| App id uses `~`, unit ids use `/`, all three units distinct | Swapping `~`/`/` or reusing one unit is the classic silent no-fill bug | `uses the right shape for app ids and unit ids`, `gives every format its own unit` | `src/config/monetization.test.ts:18`, `:28` |
-| Retry interstitials cannot outrun the time floor | Count is a *permission*, clock is the *brake*. Attempt-count alone would fire an ad every ~25 s — AdMob disables ad serving over exactly this | `cannot fire on retries faster than the time floor allows` | `src/config/monetization.test.ts:90` |
-| ATT string + SKAdNetwork list present, incl. `cstr6suwn9.skadnetwork` | Missing Google's own network makes installs unattributable | `declares ATT and the SKAdNetwork list the SDK needs` | `src/config/monetization.test.ts:57` |
+| No Google ad identifier anywhere in the native project | The AdMob publisher account is closed for good; a Google id or plist key in the binary is zero revenue and a fresh policy record (the AdMob-era app-id ↔ `useTestAds` agreement test went with AdMob) | `carries no Google ad identifier of any kind` | `src/config/monetization.test.ts` |
+| iOS has its own LevelPlay key and three distinct units; Android has none | Reusing one unit, or lending the iOS ids to another platform, reports the wrong inventory | `is configured on iOS, with its own key and three distinct units`, `keeps unit ids per platform, and never lends the iOS ones to Android` | `src/systems/providers/levelplay.test.ts` |
+| Retry interstitials cannot outrun the time floor | Count is a *permission*, clock is the *brake*. Attempt-count alone would fire an ad every ~25 s — AdMob disabled ad serving over exactly this, and the rule was kept for LevelPlay | `cannot fire on retries faster than the time floor allows` | `src/config/monetization.test.ts:90` |
+| ATT string + the SKAdNetwork ids LevelPlay and Unity Ads attribute through, and **not** Google's `cstr6suwn9` | Missing ids make installs unattributable; Google's id is refused by the no-Google gate | `declares ATT and the SKAdNetwork ids LevelPlay and Unity Ads attribute through` | `src/config/monetization.test.ts` |
 | Ribbon width is speed-driven, clamped to `[minScale, maxScale]`, never NaN | Duplicate timestamps would divide by zero without the dt floor | `draws a slow hand thicker than a fast one`, `never returns a negative or NaN width` | `src/core/Ribbon.test.ts:34`, `:54` |
 | Ribbon emits quads + discs, never a single self-intersecting outline | A hairpin folds an offset polygon through itself and a triangulator punches a hole in the ink | `survives a hairpin turn` | `src/core/Ribbon.test.ts:145` |
 | `toScreenRect` scales `w` by playfield width and `h` by its **height** | The classic copy-paste (`h * this.w`) would silently change every wall's thickness and retune all 100 levels | `scales rect width by the playfield width and height by its height` | `src/core/Playfield.test.ts:39` |
 
 ### Monetization arithmetic, in detail
 
-`src/config/monetization.test.ts:90-100` pins the retry-interstitial gate as an
-**inequality between two config fields**, not as literal values:
+`src/config/monetization.test.ts` pins the retry-interstitial gate as an
+**inequality between config fields**, not as literal values:
 
 ```ts
 expect(a.interstitialEveryNAttempts).toBeGreaterThanOrEqual(3);
 const fastestFailSeconds = 3;
 const soonestByCount = a.interstitialEveryNAttempts * fastestFailSeconds;
-expect(soonestByCount).toBeLessThan(a.minSecondsBetweenInterstitials);
-const worstCaseGapMinutes = a.minSecondsBetweenInterstitials / 60;
+expect(soonestByCount).toBeLessThan(a.lateSecondsBetweenInterstitials);
+const worstCaseGapMinutes = a.lateSecondsBetweenInterstitials / 60;
 expect(worstCaseGapMinutes).toBeGreaterThanOrEqual(2);
+expect(a.interstitialEveryNAttempts).toBeGreaterThan(monetization.reveals.offerSkipAfterAttempts);
 ```
 
-With the shipped values (`src/config/monetization.ts:133,139`):
-`interstitialEveryNAttempts = 5`, `minSecondsBetweenInterstitials = 120` →
-`5 × 3 = 15 < 120` ✓ and `120/60 = 2 ≥ 2` ✓. **`worstCaseGapMinutes ≥ 2` has
-zero headroom** — lowering `minSecondsBetweenInterstitials` by one second fails.
+With the shipped values: `8 × 3 = 24 < 120` ✓, `120 / 60 = 2 ≥ 2` ✓ (**zero
+headroom** on the late floor), and `8 > 6` — the count sits beyond the rescue ladder,
+so a difficulty spike sells the rewarded offer, not an interstitial.
 
 Shipped value vs the bound each cadence test enforces:
 
-| Field | Shipped (`src/config/monetization.ts`) | Test bound | file:line | Headroom |
-| --- | --- | --- | --- | --- |
-| `interstitialFromLevel` | `8` (`:117`) | `≥ 6` | `:70` | 2 |
-| `interstitialEveryNWins` | `3` (`:119`) | `≥ 3` | `:74` | **0** |
-| `interstitialEveryNAttempts` | `5` (`:133`) | `≥ 3` | `:91` | 2 |
-| `minSecondsBetweenInterstitials` | `120` (`:139`) | `≥ 120`, and `> 5×3` | `:75`, `:95` | **0** |
-| `sessionWarmupSeconds` | `90` (`:142`) | `≥ 60` | `:77` | 30 |
-| `maxInterstitialsPerSession` | `4` (`:145`) | `≤ 4` | `:76` | **0** |
-| `muteAfterRewardedSeconds` | `300` (`:147`) | `≥ 180` | `:103` | 120 |
-| `reveals.offerSkipAfterAttempts` | `6` (`:161`) | `≥ 5` | `:107` | 1 |
+| Field | Shipped | Test bound | Headroom |
+| --- | --- | --- | --- |
+| `interstitialFromLevel` | `8` | `≥ 6` | 2 |
+| `interstitialEveryNWins` | `3` | `≥ 3` | **0** |
+| `interstitialEveryNAttempts` | `8` | `≥ 3`, `× 3 < lateSeconds`, `> offerSkipAfterAttempts` | 1 (against the ladder) |
+| `minSecondsBetweenInterstitials` | `180` | `≥ 120`, `≥ lateSeconds` | 60 |
+| `lateSecondsBetweenInterstitials` | `120` | `≥ 120`, and the worst-case gap `≥ 2` min | **0** |
+| `sessionWarmupSeconds` | `180` | `≥ 120`, `< longSessionAfterSeconds` | 60 |
+| `maxInterstitialsPerSession` | `8` | `≥` half of what the late floor allows in half an hour | a backstop, not the pacing |
+| `muteAfterRewardedSeconds` | `300` | `≥ 180` | 120 |
+| `reveals.offerSkipAfterAttempts` | `6` | `≥ 5` | 1 |
 
-Three fields are pinned to their exact shipped value by a one-sided bound. Any
-"make it slightly more aggressive" edit to `interstitialEveryNWins`,
-`minSecondsBetweenInterstitials` or `maxInterstitialsPerSession` fails the suite
-immediately — which is the intent (`src/config/monetization.ts:20-33`).
+Two fields are pinned to their exact shipped value by a one-sided bound: any "make it
+slightly more aggressive" edit to `interstitialEveryNWins` or
+`lateSecondsBetweenInterstitials` fails the suite immediately — which is the intent.
+
+The 1.4 **economy** is pinned the same way, as sums (`describe('the economy')`): the day's
+top-up plus every mission's reward ≤ 4 and under the smallest pack; `3 ≤
+rewardedRevealsPerDay ≤ 10`; a chapter pays ≤ 5; a streak's first 30 days pay ≤ 12
+milestone reveals (≤ 15 at the bookmark cap, with the overflow); the starter is
+`reveals25`, matches its count and is not a rung; the repair cooldown is ≥ 7 days; the
+win frame scale is in (0.5, 1]. And the store's honesty functions against real
+storefront fixtures (`the sellable ladder`, `the starter offer`): USD keeps 10/20/30 and
+badges the 30, Serbia drops the 20, the UK drops the 10, nothing is judged before the
+prices arrive, and a starter that is not cheaper per reveal than every rung is not shown.
 
 ### `METRICS` pins, in detail (`src/render/Theme.test.ts`)
 
@@ -366,56 +406,52 @@ produce a lift of exactly `pt(42)`. So `touchOffsetY` is pinned in two files.
 
 ## 6. What is NOT covered
 
-Coverage is by *file pairing* (`X.ts` has an `X.test.ts` beside it). Of 7 690
-non-test lines under `src/`, **6 178 (80 %) sit in 20 files with no spec file at
-all** — 4 427 of those are logic, the remaining 1 751 are the
-`generatedLevels.ts` data table (which is heavily validated, just not by a spec
-of its own). Every claim about the files below must be verified by reading the
-source or running the app.
+Coverage is by *file pairing* (`X.ts` has an `X.test.ts` beside it). When this page
+was written, 80 % of the non-test lines under `src/` sat in files with no spec at all;
+1.4 paired most of the systems and every new pure model, but the scenes and the drawing
+are still unpaired. Every claim about the files below must be verified by reading the
+source or running the app — which, for these, means the browser harness in §8.
 
-| Untested file | Lines | Blind spot |
-| --- | --- | --- |
-| `src/scenes/GameScene.ts` | 707 | The entire play loop: input → stroke → collision → win/fail. No test drives a stroke end to end |
-| `src/render/InkRenderer.ts` | 432 | All actual drawing. `Ribbon`'s geometry is tested; nothing renders it in a test |
-| `src/render/UI.ts` | 372 | Buttons, labels, layout. Only `HitArea`'s pure maths is covered |
-| `src/core/LevelValidator.ts` | 337 | **No dedicated spec, yet 320 of the 506 tests depend on it.** Its correctness is assumed, never proved |
-| `src/scenes/LevelSelectScene.ts` | 308 | Grid, locking, previews |
-| `src/systems/Progress.ts` | 304 | Save/load, unlock rules, migration. Untested persistence |
-| `src/systems/Ads.ts` | 302 | The runtime that *consumes* the pinned `monetization` config. The config arithmetic is tested; the code enforcing it is not |
-| `src/render/ScrollView.ts` | 272 | Momentum, clamping, tap-vs-drag disambiguation |
-| `src/scenes/GalleryScene.ts` | 249 | Saved-figure browsing |
-| `src/scenes/MenuScene.ts` | 216 | Menu, banner reserve |
-| `src/systems/Iap.ts` | 206 | Purchase, restore, entitlement. **Untested money path** |
-| `src/render/ShareCard.ts` | 204 | Share image composition |
-| `src/systems/Audio.ts` | 173 | — |
-| `src/systems/Share.ts` | 104 | Native share bridge |
-| `src/main.ts` | 67 | Phaser bootstrap, scale config |
-| `src/scenes/BootScene.ts` | 55 | — |
-| `src/systems/Haptics.ts` | 47 | — |
-| `src/systems/Rate.ts` | 38 | Rate-prompt trigger |
-| `src/data/generatedLevels.ts` | 1751 | Data, not logic — but *validated* by `levels.test.ts` / `quality.test.ts` |
-| `src/data/types.ts` | 34 | Types only |
-| `scripts/genLevels.ts` | — | Excluded by `include: ['src/**/*.test.ts']`. The generator that produced the 95 levels is never exercised; only its output is checked |
+| Untested file | Blind spot |
+| --- | --- |
+| `src/scenes/GameScene.ts` | The entire play loop: input → stroke → collision → win/fail, the win card's timeline, the rescue pills, the refill auto-use. No test drives a stroke end to end; the pure pieces it calls (`Rescue`, `ResultCard`'s layout, `RouteProgress`, `settleWin`) are tested |
+| `src/scenes/MenuScene.ts` | The menu, its moments and sheets. `MenuLayout`, `DailyCard`, `StreakSheet` and `MissionsSheet` models are tested; the scene that plays them is not |
+| `src/render/InkRenderer.ts` | All actual drawing. `InkRenderer.test.ts` covers only its pure helpers |
+| `src/render/UI.ts` | Buttons, chips, toasts, flights. `ToastQueue`, `countText`, `flyReward`'s zero/NaN landing and `pulse`'s rest scale are tested; the rest is Phaser |
+| `src/core/LevelValidator.ts` | **No dedicated spec, yet every level test depends on it.** Its correctness is assumed, never proved |
+| `src/render/ScrollView.ts` | Momentum, clamping, tap-vs-drag disambiguation |
+| `src/main.ts` | Phaser bootstrap, the foreground hook, the warm reminder tap, desk mode |
+| `src/scenes/BootScene.ts` | The cold reminder route, the entitlement handoff |
+| `src/render/Intro.ts` | The once-a-day film and `skipIntro` |
+| `src/data/generatedLevels.ts` | Data, not logic — but *validated* by `levels.test.ts` / `quality.test.ts` |
+| `scripts/genLevels.ts` | Excluded by `include: ['src/**/*.test.ts']`. Only its output is checked |
+
+Paired since this page was first written, and so no longer blind: `Progress`, `Ads`,
+`Iap` (the credit-once path against the real Progress, flush before finish, the cancel
+fast path, Ask to Buy, unreturned products), `Rate`, `Audio`, `Haptics`, `Share`,
+`Nudges`, `Music`, `GameCenter`, `Daily`.
 
 Specific blind spots worth naming:
 
-- **No integration test exists.** Nothing constructs a `GameScene`, feeds
-  pointer events, and asserts a win or a fail. Every scene-level behaviour is
-  verified by hand only.
-- **No native bridge is stubbed or mocked.** `@capacitor/*`, `admob`,
-  `cordova-plugin-purchase`, `in-app-review`, `haptics`, `filesystem`,
-  `preferences`, `share` — none are exercised. `monetization.test.ts` reads the
-  plist as *text*; it never calls the SDK.
-- **The Android ad path is untested and currently broken-by-config.**
-  `LIVE_ANDROID` is `{ appId: '', banner: '', interstitial: '', rewarded: '' }`
-  (`src/config/monetization.ts:83-88`) and `useTestAds` is `false`
-  (`:105`). `adsConfigured()` would return `false` on Android. The test
-  `reports itself configured` (`src/config/monetization.test.ts:34`) passes only
-  because `Capacitor.getPlatform()` returns `'web'` under vitest, so the
-  `isAndroid()` branch of `admobUnits()` (`:174-175`) is never taken. **Do not
-  read that green test as "ads work on Android".**
-- **No persistence test.** `Progress.ts` writes via `@capacitor/preferences`; a
-  save-format change has no regression net.
+- **No integration test exists in the repo.** Nothing in `npm test` constructs a
+  `GameScene`, feeds pointer events, and asserts a win or a fail. Scene-level
+  behaviour is verified in a real browser by the harness in §8, which lives outside
+  the repo, and on the simulator and the owner's phone.
+- **Few native bridges are stubbed.** `@capacitor/*`, `cordova-plugin-purchase`,
+  `in-app-review`, `haptics`, `filesystem`, `preferences`, `share` are not
+  exercised. The LevelPlay plugin is the exception: `providers/levelplay.test.ts`
+  mocks `capacitor-levelplay-ads` to pin call order and event races — which proves
+  the JavaScript contract, not that the native SDK fills. `monetization.test.ts`
+  reads the plist as *text*; it never calls the SDK.
+- **There is no Android ad path.** No LevelPlay Android app exists, so the
+  Android key and units are empty and every ad path no-ops there by design;
+  `providers/levelplay.test.ts` pins exactly that. **Do not read a green suite
+  as "ads work on Android".**
+- **Persistence is tested against an in-memory `@capacitor/preferences`.**
+  `Progress.test.ts` round-trips real JSON through a `Map`, so hostile saves and
+  both schema migrations (v1→v2 drops every id-keyed entry; v2→v3 drops `l1`–`l5`
+  only, runs once, and leaves a newer build's save alone) are pinned. The native
+  UserDefaults write itself is not exercised.
 - **`setTheme` success path is untested.** `THEMES` contains only `paper`
   (`src/render/Theme.ts:88-90`), so `src/render/Theme.test.ts:58` only covers
   the *rejection* branch. Adding a second ink pack ships with no coverage.
@@ -433,11 +469,119 @@ Specific blind spots worth naming:
 
 ### Reading a green suite honestly
 
-Green means: the geometry primitives agree with each other, the 100 shipped
+Green means: the geometry primitives agree with each other, the 300 shipped
 levels are provably solvable *and* drawable with a real hand under the shipped
-metrics, the LOCKED constants are unchanged, and the monetization config cannot
-have been quietly loosened. Green says **nothing** about whether the game boots,
-renders, saves, shows an ad, or completes a purchase.
+metrics, the LOCKED constants are unchanged, the monetization config and the economy's
+sums cannot have been quietly loosened, a purchase is credited exactly once through the
+code the phone runs, and the reminder plan never prompts and never lies. Green says
+**nothing** about whether the game boots, renders, shows an ad, or completes a real
+StoreKit purchase.
+
+## 7. The 1.4 suites
+
+What each new or extended suite pins, in one line each. The dates are passed in, never
+read from the clock, so every one of them runs the same on any day.
+
+| Suite | Pins |
+| --- | --- |
+| `core/Streak.test.ts` | A bookmarked day bridges the streak but does not count; `longest` counts through bridges; the guard spends only when the gap fits the bookmarks and the run is ≥ 2, never bridges a 1-day run, and is idempotent; the repair window is exactly one missed day, respects the 14-day cooldown and refuses a day a bookmark covers; the milestone table, with the bookmark overflow to a reveal; a jump pays each milestone day once; DST on 2026-10-25 |
+| `core/Missions.test.ts` | The same date deals the same three, slot one always the Daily; `new2` and `best` only where they can be done; a Daily win never advances slots 2–3; a replay counts for `wins3` and `medal`, not `new2`; each pays once; an unknown id nulls the record |
+| `core/Rewards.test.ts` | 15 chapters, `chapterOf(0..19) = 0`, `chapterOf(299) = 14`; the 9→10 and 19→20 crossings pay once each; a skip does not count and a replay pays nothing; the backlog sum on a seeded 1.3 save |
+| `core/Rescue.test.ts`, `core/RouteProgress.test.ts` | The reveal-before-skip ladder (3 / 6 / 9) and the pill band under the start dot; the near-miss field never lets a dead end borrow a later corridor's number, and rises along the solver's path |
+| `systems/Progress.test.ts` (extended) | Every 1.4 field against hostile values; the one grant path and `onGrant`; `settleWin` for a first clear, a replay, 9→10, 19→20, a medal, a Daily milestone, a rerun and an owner; the guard, the repair and the refund of a bookmark spent on a day folded after midnight; the ad cap and its clock-back rule; credited transaction ids; play days and the review-prompt fields; the bookmark seed for a 1.3 save; Game Center's week ignores bookmarked days |
+| `systems/Iap.test.ts`, `systems/iapMock.test.ts` | Against the real Progress: five products in one `register`; a duplicate transaction credited once; on disk before `finish()`; a cancel answers in under 100 ms; Ask to Buy returns `'pending'` and lands later as a late purchase (Remove Ads too); an unreturned product is dropped; a store that failed to start is not "payments off". The mock is never selected on native or without the flag, sells the config's ids, and contains no ad-marker literal |
+| `render/StoreSheet.test.ts` | Row order; the starter hidden when bought, for owners, before five wins, while pending, or when it is not a deal; the ad row gone at the cap and for owners, with "N left today"; the free row the only primary; every price line ≥ 4.5:1 at rest and pressed; the non-row states (owner, payments off, unreachable, the cap footnote) and when the sheet is null |
+| `systems/NudgePlan.test.ts`, `systems/Nudges.test.ts` | At most one reminder a day plus the saver at streak ≥ 3; nothing in quiet hours or within a minute; ≤ 8, ids 8101–8109; nothing while the Daily is locked; bookmark-holder copy; no reveal copy for owners; T's median, clamp and rounding; DST in Belgrade and New York; length limits at a 365-day streak; no template or title on consecutive days, across rebuilds, over a 40-player simulation; `routeForTap`. `rebuild()` never schedules or requests while permission is undecided or the switch is off, cancels the range first, serialises, coalesces and dedupes; `shouldSoftAsk`'s cap, spacing and decided case |
+| `systems/Rate.test.ts` | `isPeak` / `shouldAskAt` at every boundary; spent per version and still spent after a relaunch; a pre-1.4 `ratePrompted` save gets its ask; the second-day wait; purchases and skips stand it down, a new session (30 min from the first hide, or a new day) resets that and the cold launch's own announcement does not; `VITE_APP_VERSION` equals the pbxproj's `MARKETING_VERSION` |
+| `render/ResultCard.test.ts`, `MenuLayout.test.ts`, `DailyCard.test.ts`, `StreakSheet.test.ts`, `MissionsSheet.test.ts`, `SafeArea.test.ts` | The pure layouts at canvas scales 0.317–0.626 (card above the banner, buttons at the tap floor, nothing past the menu's foot line, tap bands never overlapping); every Daily card kind, the 18:00 boundary, the tutorial lock; the Streak sheet's repair row, titles and next milestone; mission routes; `bannerLift` and desk mode on the iPhone Duo shapes |
+| `render/UI.toast.test.ts`, `systems/Haptics.test.ts`, `systems/Audio.test.ts`, `render/Theme.test.ts` | `ToastQueue` (cap, same-tone replace, the urgent slot); `countText` and `flyReward`'s zero/NaN landing; the reward-tap throttle; the new sounds render offline; the medal golds and contrast tokens |
+| `scenes/LevelSelectScene.test.ts`, `scenes/GalleryScene.test.ts` | The chapter header's next unpaid mark ("+1 at 10", then "+2 at 20", none for owners); gallery captions ("12 · 7.5 s", "Daily #54 · 7.5 s") |
+
+---
+
+## 8. Browser QA: the harness that is not in the repo
+
+The 1.4 QA ran the real game in a real browser — every menu state, the store with the
+fake store, the win cards, the rescue pills, reminders, Duo shapes — with a Playwright
+harness that lived in the session scratchpad and was **never committed**. The repo's
+`package.json` has no Playwright dependency. What is in the repo is
+`scripts/screenshots/capture.mjs`, which carries the same proved-stroke code for the
+store screenshots and is the place to start a rebuild (`FW_PLAYWRIGHT` points it at a
+Playwright install anywhere).
+
+**Rebuilding it, in the order that matters:**
+
+1. **Serve the mock build** on a fixed port: `VITE_ADS=mock npx vite --port 5199
+   --strictPort` (it is `npm run dev:mock` on a pinned port). Its ads are drawn in the
+   page and call no network, so every ad surface is safe to tap, and it sells through
+   the fake store. Never point a harness at an `ADS:on` build. Store screenshots are the
+   exception the other way: they come from an **ads-off** server
+   (`VITE_ADS=off VITE_AD_MODE=test npx vite --port 5200 --strictPort`), and
+   `capture.mjs` refuses to continue unless the app reports `ADS:off`.
+2. **Playwright outside the repo** (`npm i playwright` in a scratch folder), driving
+   **headed real Chrome** — `chromium.launch({ channel: 'chrome', headless: false })`.
+   Headless Chrome renders WebGL through SwiftShader: a blank canvas, or ~700 ms a frame.
+   Keep the windows unoccluded; macOS throttles `requestAnimationFrame` in hidden ones.
+3. **Seed the save before the app runs**: `context.addInitScript` writing
+   `localStorage['CapacitorStorage.foldwing.save.v1']`. Never set it and reload —
+   `Progress` flushes its in-memory save on `pagehide` and overwrites yours. The
+   studio sting (`@noqyris/splash`) plays on phones only, so a browser run starts
+   straight on the game.
+4. **Use the app's own module instances.** Import the URL the page actually loaded —
+   look it up in `performance.getEntriesByType('resource')` after raising the buffer —
+   because after a Vite hot update the app has `…/Progress.ts?t=…`, and a plain
+   `import('/src/systems/Progress.ts')` gets an empty second copy. And hand the page a
+   `vite-hmr` WebSocket that never opens: several sessions edit this tree, and a hot
+   swap once tore down a Game scene mid-run.
+5. **Win only with proved routes.** Plan the validator's BFS path at `hitRadius + 7`,
+   then `+6`, `+5` — never thinner by default — resample it to whole CSS pixels mapped
+   back through Phaser's transform, run the game's own grab test, `cursorFor` (touch
+   offset included), `collision` at the real `hitRadius` on both halves, goal test and
+   recorder spacing over exactly those positions, check the drawn ink at radius 1, then
+   send one input event per move and wait for a Phaser pointer to report it. A straight
+   synthetic stroke is for an honest death only.
+6. **Shapes**: 390×844 @3 (iPhone); the Duo's outer display 466×678 with
+   `?safe=0,84,34,0`; inner tall 669×951 with `?safe=82,0,34,0`; inner wide 951×669 with
+   `?safe=0,84,34,0`; a half 433×669; Split View panes 669×440 and 320×690 — and each
+   once more with reduced motion (the OS setting and `save.reducedMotion`).
+7. **Clock**: shift `Date` / `Date.now` to a chosen start and let it run (not frozen
+   fake timers, which stall the game loop), then jump it to test 18:00 and midnight.
+
+**DEV handles** (`import.meta.env.DEV` only; none reaches a bundle): `window.game` —
+the Phaser game; `game.scene.getScene('Game')` exposes `level`, `pf`, `collision`,
+`phase`, `recorder`, `cursorFor`, `levelIndex`, `dailyDate`, `resultCard`
+(`buttonPoint('share' | 'double' | 'next' | 'done')`), `frameScale`, `winQuiet` — and
+`window.foldwing`: `renderShareCard`, and `nudges`, the Nudges service
+(`rebuild()`, `permission()`, `devPlugin.pending` — what a phone would hold —
+`devPlugin.tap(extra?)` — a reminder tap). Observable state: `html[data-desk]` and the
+`--fw-banner-lift` variable.
+
+**Switches:**
+
+| Switch | Where it works | Effect |
+| --- | --- | --- |
+| `?safe=t,r,b,l` | dev server | Pretends the phone has those safe-area insets, in points: sets `--fw-safe-*` on `<html>`, and the page and the game lay out inside them. The mock ads' and the fake store's DOM overlays still read the real `env()` |
+| `?notif=granted\|denied\|prompt` | dev server, browser | The in-memory stand-in for the notifications plugin starts at that permission (default undecided) |
+| `?notifAnswer=deny` | dev server, browser | The fake system alert refuses |
+| `?iap=slow\|none\|restricted` | mock build, browser | The fake store answers after 8 s / with no products / with payments off |
+| `?restore=true\|false\|cancelled\|error` | mock build, browser | What a restore comes back with |
+| `?prices=usd\|srb\|gbr`, `window.__foldwingPrices` | mock build, dev server | Storefront price fixtures (a name, or `{ currency, removeAds, starter, packs }` in millionths) |
+| `localStorage['foldwing.mockOwned']` | mock build, browser | Remove Ads "owned" for a restore; clear it to reset |
+| keys `1`–`9`, `R`, `M` | dev server | Jump to a level, restart it, back to the menu |
+
+Selectors on the fake store: `[data-foldwing-mock="purchase"] [data-action=buy|cancel|fail|pending]`,
+and after Pending `[data-foldwing-mock="purchase-pending"] [data-action=approve|decline]`.
+
+**On the simulator** (`SIM=<udid> npm run ios:run`, the mock build, the newest iOS
+runtime): the app launches under UIScene; Safari Web Inspector's
+`Capacitor.Plugins.LocalNotifications.getPending()` lists at most eight, ids 8101–8109;
+a test notification with `extra.route = 'daily'`, tapped from the background and again
+after a force-quit, opens today's Daily with no film; a notification in the foreground
+shows no banner once `capacitor.config.json` is synced. There is no `.storekit` file, so
+the store there says "isn't reachable" — StoreKit is tested with a Sandbox Apple ID on a
+device. The review prompt shows only in a development build, never from TestFlight.
+
+---
 
 ## See also
 

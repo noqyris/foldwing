@@ -3,11 +3,13 @@
 >
 > This page describes the retired **100-level set of bar obstacles** and the
 > generator that produced it. Neither still exists. The game now ships 300
-> levels — five hand-authored and 295 spanning-tree mazes built by
-> `src/core/MazeGen.ts`, which is also what the Daily Fold runs on the phone —
-> so every level count below is wrong, and any passage about wall placement,
-> interlock reservation or inert-wall stripping describes code that was
-> deleted with the bar set.
+> spanning-tree mazes built by `src/core/MazeGen.ts`, which is also what the
+> Daily Fold runs on the phone — so every level count below is wrong, and any
+> passage about wall placement, interlock reservation or inert-wall stripping
+> describes code that was deleted with the bar set. The tutorial went too: the
+> five hand-authored bar levels, LOCKED wherever they appear below, were
+> replaced in September 2026 by five small mazes from
+> `scripts/genTutorialMazes.ts`, and save schema 3 forgets clears of the old ones.
 >
 > The "Source files" line-count tables are wrong too, and that matters more
 > than it looks: the `file:line` citations throughout were counted against
@@ -16,6 +18,15 @@
 >
 > Kept because the reasoning is still worth having. For what the game actually
 > does now, see [../README.md](../README.md).
+>
+> **1.4 (September 2026)** added a service (`Nudges`, the local reminders), pure rule
+> modules under `src/core/` (`Streak`, `Missions`, `Rewards`, `Rescue`,
+> `RouteProgress`) and pure layout modules under `src/render/` (`MenuLayout`,
+> `DailyCard`, `ResultCard`, `StoreSheet`, `StreakSheet`, `MissionsSheet`,
+> `SafeArea`), and routed every reveal through one announced grant path in
+> `Progress`. The singleton table and the interruption order below are brought up to
+> date; the economy is in [09-systems.md](09-systems.md) §6, the store in
+> [10-monetization.md](10-monetization.md) §7.
 
 ---
 
@@ -63,9 +74,12 @@ forbids the player `x ∈ [1-b, 1-a]` at the same `y` (`src/data/types.ts:16-17`
 On a win the stroke and its mirror close into a symmetric figure, which is
 saved normalized and can be re-rendered as a 1080×1080 share card.
 
-Shipped set: **100 levels** — 5 hand-authored (`src/data/levels.ts:21-83`,
-LOCKED) plus 95 generated (`src/data/generatedLevels.ts:14`), concatenated at
-`src/data/levels.ts:89`. Pinned by `src/data/levels.test.ts:25-30`.
+Shipped set: **300 levels**, all mazes from `src/core/MazeGen.ts` — 5 tutorial
+mazes (`src/data/tutorialLevels.ts`, written by `scripts/genTutorialMazes.ts`)
+plus 295 generated (`src/data/generatedLevels.ts`, written by
+`scripts/genLevels.ts`), concatenated in `src/data/levels.ts`. Pinned by
+`levels.test.ts` › `ships 300 levels, tutorial first`. The bar-era set this page
+describes was 5 hand-authored LOCKED levels plus 95 generated.
 
 ---
 
@@ -200,7 +214,7 @@ const game = new Phaser.Game({
 |---|---|---|
 | `parent` | `'app'` | matches `<div id="app">` at `index.html:58` |
 | `backgroundColor` | `theme().paper` = `0xe9ebe4` (`Theme.ts:74`) | matches the page background (`index.html:23`, `#e9ebe4`) and `capacitor.config.ts:9` (`#E9EBE4`), so FIT's letterbox bars are invisible |
-| `width`/`height` | `750` / `1334` (`Theme.ts:30-31`) | 2× iPhone-SE portrait, 9:16 — the widest common portrait aspect, so taller phones letterbox (invisible) rather than pillarbox and steal the width the mirror needs |
+| `width`/`height` | `750` / `viewHeight()` | 750 always; the height is adaptive (`Theme.adaptiveHeight`: the safe area's aspect, clamped to 1334…1720), decided before the game is built and re-applied with `setGameSize` on every relayout — a tall phone fills its safe area, a 9:16-or-wider one keeps 1334 and letterboxes sideways (see 02-coordinate-system §1.2) |
 | `input.activePointers` | `3` | **Load-bearing.** Phaser allocates 1 touch pointer by default. A collision always happens mid-drag, so the drawing finger is still down through the 400 ms flash (`METRICS.failFlashMs = 400`); a second hand reaching in to restart would find no free Pointer. 3 also covers a stray palm. (`main.ts:22-29`) |
 | `roundPixels` | `false` | sub-pixel ribbon geometry |
 | `scene` array | Boot first | Phaser auto-starts only the first scene — Boot is the sole entry point |
@@ -210,10 +224,11 @@ Three of the four colour declarations for paper live outside `Theme.ts`
 Changing `PAPER.paper` (`Theme.ts:74`) alone leaves visible seams at the
 letterbox edge.
 
-### 3b. `src/main.ts:47-54` — the viewport-settle handler
+### 3b. `src/main.ts` — the viewport-settle handler
 
 ```ts
 const refresh = (): void => {
+  game.scale.getParentBounds();   // read the real parent FIRST — see below
   game.scale.refresh();
 };
 window.addEventListener('resize', refresh);
@@ -221,9 +236,10 @@ window.addEventListener('orientationchange', refresh);
 window.visualViewport?.addEventListener('resize', refresh);
 window.visualViewport?.addEventListener('scroll', refresh);
 for (const ms of [50, 250, 600, 1200]) setTimeout(refresh, ms);
+// …plus a ResizeObserver on the safe-area box (below), and resizeInterval: 100.
 ```
 
-**Why it exists (`main.ts:39-46`):** `game.scale.refresh()` recomputes the
+**Why it exists:** `game.scale.refresh()` recomputes the
 canvas bounding rect, and that rect is what maps a touch to a game coordinate.
 Inside a Capacitor WKWebView the real viewport settles **after** `new
 Phaser.Game(...)` returns — status bar, safe areas, splash dismissal — and
@@ -231,17 +247,48 @@ frequently without firing a `window` `resize` event at all. A stale rect puts
 every touch a few points from where the player aimed. In a game that is
 nothing but a drawn line, a few points is the whole experience.
 
+`getParentBounds()` comes first because Phaser 3.90's `refresh()` sizes the
+canvas from the **cached** parent size and only re-reads the parent at its very
+end: on its own it lays the canvas out for the previous box and then marks the
+new one as seen, so Phaser's own poll never corrects it (reproduced as a canvas
+stuck at 468 × 833 in a 669 × 835 box).
+
 The four unconditional timeouts `[50, 250, 600, 1200]` are the belt to the
 event listeners' braces: they fire whether or not any event arrives. Do not
 "clean this up" by removing them.
 
-The complementary half of the fix is CSS, not JS: `index.html:40-50` pins
-`html`, `body` and `#app` to `position: fixed; inset 0`, removing every axis of
-scroll/rubber-band that would shift the cached canvas rect
-(`index.html:32-39`). `touch-action: none` and `overscroll-behavior: none`
-(`index.html:29-30`, `:53`) complete it, and
-`viewport-fit=cover, user-scalable=no, maximum-scale=1` at `index.html:5-8`
-stop pinch-zoom from moving the rect at all.
+**The game lives in the safe area.** `index.html` pins `html` and `body` to
+`position: fixed; inset 0` (the paper runs to every edge, and nothing can
+scroll or rubber-band the cached canvas rect), and pins `#app` — the canvas's
+parent — to `env(safe-area-inset-*)` on each side separately. FIT therefore fits
+the canvas into the safe area: it can never sit under a status bar, a camera or
+the home indicator. On iPhone Duo those are an 84pt strip down one side (outer
+display, inner display held wide) or an 82pt band across the top (inner display
+held tall), which no in-canvas offset could absorb — the playfield is fixed
+geometry. On an ordinary iPhone the board is the same size (the SE's shrinks 3%)
+and centred in the safe area rather than on the glass.
+
+The insets can change with no window event (a fold settling, Split View, the
+status bar moving sides), so `render/SafeArea.ts` keeps one hidden fixed box
+inset by the same `env()` values, and `main.ts` watches it with a
+`ResizeObserver` that calls `refresh`. A move that keeps its size is caught by
+Phaser's own poll at `resizeInterval: 100`. The same observer sets
+`--fw-banner-lift`: in a window so short that `METRICS.bannerReserve` no longer
+covers the 50pt native banner with `BANNER_AIR_PT` to spare (canvas scale below
+about 0.44 — an iPhone with Display Zoom, and a stacked Split View pane on Duo),
+`#app`'s bottom rises by the shortfall so the banner never lands on the board.
+The banner is a fixed height in POINTS, so what it covers in base units grows as
+the canvas is drawn smaller — 100 at 0.5, 103 on the SE, 122 on a zoomed SE —
+which is why a strip reserved in base units cannot be the whole answer:
+`SafeArea.bannerReach` / `canvasBannerTop` measure where the banner really
+begins, and the one layout that deliberately runs into the reserve (the menu's
+Store / Restore foot) ends a point above THAT line — see `MenuScene.footLine`.
+
+`touch-action: none` and `overscroll-behavior: none` complete the lock, and
+`viewport-fit=cover, user-scalable=no, maximum-scale=1` stop pinch-zoom from
+moving the rect at all. `viewport-fit=cover` and Capacitor's
+`ios.contentInset: 'never'` are also what hand the per-side insets to `env()`
+in the first place — keep both.
 
 ### 3c. `src/main.ts:58-67` — DEV-only globals
 
@@ -387,11 +434,12 @@ which has no callers).
 | Singleton | Export site | Backing dependency | Native-only? |
 |---|---|---|---|
 | `Progress` | `src/systems/Progress.ts:304` | `@capacitor/preferences` | No (localStorage on web) |
-| `Ads` | `src/systems/Ads.ts:302` | `@capacitor-community/admob` | Yes — `isNative() && adsConfigured()` |
-| `Iap` | `src/systems/Iap.ts:197` | `cordova-plugin-purchase` (`CdvPurchase` global) | Yes — `available` is `Capacitor.isNativePlatform()` |
+| `Ads` | `src/systems/Ads.ts` | `capacitor-levelplay-ads` (Unity LevelPlay) behind `src/systems/adProvider.ts`; AdMob until September 2026 | Yes — native only, except the fake-ads mock build (`VITE_ADS=mock`) |
+| `Iap` | `src/systems/Iap.ts` | `cordova-plugin-purchase` (`CdvPurchase` global); the fake store `iapMock.ts` in a browser mock build | Native — except the browser's mock build, which sells through the fake store |
 | `Audio` | `src/systems/Audio.ts:173` | Web Audio API (no plugin) | No |
 | `Haptics` | `src/systems/Haptics.ts:47` | `@capacitor/haptics` | Yes — web is a no-op |
-| `Rate` | `src/systems/Rate.ts:38` | `@capacitor-community/in-app-review` | Yes — `shouldAsk` returns false off-native |
+| `Rate` | `src/systems/Rate.ts` | `@capacitor-community/in-app-review` | Yes — `shouldAsk` returns false off-native |
+| `Nudges` | `src/systems/Nudges.ts` | `@capacitor/local-notifications` (the plan is the pure `NudgePlan.ts`) | Yes — a DEV-only in-memory stand-in in the browser |
 | `Share` | `src/systems/Share.ts:104` | `@capacitor/{filesystem,share}` + Web Share fallback | No |
 | `monetization` | `src/config/monetization.ts:90` | `as const` object literal | n/a |
 
@@ -401,9 +449,13 @@ Internal dependencies between singletons:
   monetization ──▶ Progress   (Progress.ts:15, starting stash / daily top-up)
   monetization ──▶ Ads        (Ads.ts:22, all cadence gates)
   monetization ──▶ Iap        (Iap.ts:23, product id)
-  monetization ──▶ Rate       (Rate.ts:11, firstPromptAfterWins)
-  Progress     ──▶ Iap        (Iap.ts:24, grant/read entitlement)
-  Progress     ──▶ Rate       (Rate.ts:12, ratePrompted / totalWins)
+  SessionLifecycle ──▶ Ads, Rate (onSessionStart: the one session rule, core/Session;
+                                   Ads also waits on whenAdLayerMayStart, the ATT gate)
+  Progress     ──▶ Iap        (creditTransaction, setAdsRemoved, the starter's marks)
+  Progress     ──▶ Rate       (ratePromptedVersion, playDays, skipsSinceLaunch, onGrant)
+  Progress     ──▶ Nudges     (the save the plan is built from)
+  Nudges       ──▶ Rate       (promptPending: no review under the permission alert)
+  Iap          ──▶ Ads        (applyEntitlement tells the ad layer)
   Audio, Haptics, Share: no intra-systems dependencies
 ```
 
@@ -430,31 +482,36 @@ Internal dependencies between singletons:
   gesture — iOS refuses otherwise, and a context created at boot arrives
   permanently suspended (`Audio.ts:42-46`). It is called from
   `GameScene.onPointerDown` (`GameScene.ts:189`) and nowhere else.
-- `Iap.connect()` is the real initialiser and is lazy (`Iap.ts:83`). It wires
-  `approved → grant → finish` **before** `store.initialize()` (`Iap.ts:104-110`),
-  because an unfinished transaction is re-delivered on every launch.
-  `needAppReceipt: false` (`Iap.ts:128`) is a bug fix, not an optimisation.
+- `Iap.warm()` → `connect()` is the real initialiser, shared by every caller and
+  run when a selling screen opens, never at launch. It registers all five products
+  in one call and wires `approved → creditPurchase → flush → finish` **before**
+  `store.initialize()`, because an unfinished transaction is re-delivered; a
+  purchase is credited once per transaction id. `needAppReceipt: false` is a bug
+  fix, not an optimisation.
 - `applyEntitlement(storeSays: boolean | null)` (`Iap.ts:204-206`) upgrades on
   `true` and does nothing otherwise. `restore()` returns `null` for
   "not authoritative" so a network blip can never downgrade a paying user.
 
 ### Interruption arbitration
 
-Three things can interrupt the player, and they are ordered rather than
+Four things can interrupt the player, and they are ordered rather than
 stacked:
 
 1. `Ads.wouldShowInterstitial(levelIndex, winsSinceAd)` — `Ads.ts:175-180`
 2. `Ads.wouldShowOnAttempt(levelIndex, attemptsSinceAd)` — `Ads.ts:193-198`
-3. `Rate.shouldAsk(adWillShow)` — `Rate.ts:20-26`, stands down when an ad is queued
-   (called from `GameScene.ts:368-374`)
+3. The win card's own ask — [Remind me], or the chapter doubler. When the card drew
+   one (`winQuiet`), `advance()` skips the interstitial and leaves `winsSinceAd` armed.
+4. `Rate.shouldAsk({ adWillShow, quiet, win })` — stands down when an ad is queued or
+   the card already asked, and otherwise asks only at a peak, once per version (see
+   [09-systems.md](09-systems.md) §5)
 
 Both `wouldShow*` predicates funnel through the private `timingAllows()`
 (`Ads.ts:158-169`) so a third call site cannot skip the session warm-up, the
 session cap, the rewarded mute or the 120 s floor.
 `src/config/monetization.test.ts:90-100` **pins the arithmetic**:
 `interstitialEveryNAttempts * 3s < minSecondsBetweenInterstitials`, and the
-worst-case gap ≥ 2 minutes. Loosening either gate is an AdMob-account risk, not
-a retention trade (`monetization.ts:21-33`).
+worst-case gap ≥ 2 minutes. Loosening either gate is an ad-account risk (it was
+written against AdMob's policy and kept for LevelPlay), not a retention trade (`monetization.ts:21-33`).
 
 ---
 
@@ -473,7 +530,7 @@ Everything that leaves the Phaser world:
 | Capacitor `Preferences` | `src/systems/Progress.ts:148`, `:291` | UserDefaults / SharedPrefs / localStorage |
 | Capacitor `Filesystem` + `Share` | `src/systems/Share.ts:55-66` | writes to `Directory.Cache`, not Documents — a derived artefact has no business surviving in the user's file provider |
 | Capacitor `Haptics` | `src/systems/Haptics.ts:41` | fire-and-forget, `.catch(() => {})` |
-| AdMob plugin | `src/systems/Ads.ts` throughout | every method swallows its own errors |
+| LevelPlay plugin (`LevelPlayAds`) | `src/systems/providers/levelplay.ts` only — every scene goes through `Ads` | every method swallows its own errors |
 | `InAppReview` | `src/systems/Rate.ts:31` | OS gives no callback; throttled to ~3/year |
 | `CdvPurchase` global | `src/systems/Iap.ts:88`, `:166`, `:183` | provided by `import 'cordova-plugin-purchase'` (`Iap.ts:22`) |
 | `Capacitor.isNativePlatform()` / `getPlatform()` | `Ads.ts:24`, `Haptics.ts:15`, `Share.ts:14`, `Rate.ts:21`, `Iap.ts:56`, `monetization.ts:170` | the single platform predicate |
@@ -484,7 +541,7 @@ by hand:
 
 | Value | TS site | Native site | Enforced by |
 |---|---|---|---|
-| AdMob app id | `monetization.ts:77` (`LIVE_IOS.appId`) | `ios/App/App/Info.plist` → `GADApplicationIdentifier` | `monetization.test.ts:45-55` |
+| Consent provider `custom` | `package.json` → `levelplay.consentProvider` | `ios/App/App/Info.plist` → `LevelPlayCMPProvider` (written by the sync hook) | `monetization.test.ts` |
 | Paper colour `#E9EBE4` | `Theme.ts:74` | `index.html:11`, `index.html:23`, `capacitor.config.ts:9` | nothing — silent drift |
 | App id `com.noqyris.foldwing` | `capacitor.config.ts:4`, `monetization.ts:109` (product prefix) | Xcode project, `package.json:16` (`ios:run`) | nothing |
 
@@ -553,10 +610,11 @@ npm run typecheck  # tsc --noEmit                    (package.json:13)
 | Coordinate system | `x,y ∈ [0,1]` full playfield, axis at `x = 0.5`, `mirror(p) = {1-p.x, p.y}` — LOCKED | `data/types.ts:4-18` | `Playfield.test.ts:52-81` |
 | Axis is a soft wall | `clampToDrawable` clamps, never rejects — LOCKED | `Playfield.ts:81-86` | `Playfield.test.ts:89-134` |
 | Continuous collision | segment-swept, both sides, every wall — LOCKED | `CollisionSystem.ts:10-13` | `CollisionSystem.test.ts:66-79` |
-| Hand-authored levels | the five `TUTORIAL_LEVELS` numbers — LOCKED | `levels.ts:21-83` | `levels.test.ts:38-52` |
-| Level count | 5 + 95 = 100 | `levels.ts:89` | `levels.test.ts:25-30` |
+| Tutorial mazes | the five `TUTORIAL_LEVELS`, exactly as generated — a `MazeGen` change must not silently re-carve them (replaced the LOCKED hand-authored bars, September 2026) | `tutorialLevels.ts` ← `scripts/genTutorialMazes.ts` | `levels.test.ts` › `keeps the tutorial mazes exactly as generated` |
+| Level count | 5 + 295 = 300; ids `l1`…`l300` equal positions, because the save keys clears by id and unlocks by index | `levels.ts` | `levels.test.ts` › `ships 300 levels, tutorial first`, `keys every level by its position…` |
+| Levels 6–300 and every Daily Fold | byte-identical across `MazeGen` refactors (sha256 fingerprints) | `generatedLevels.ts`, `core/MazeGen.ts` | `levels.test.ts` › `keeps levels 6 to 300 byte-identical…`, `keeps every Daily Fold identical…` |
 | Ad cadence arithmetic | count gate must never outrun the time floor | `monetization.ts:112-148` | `monetization.test.ts:66-109` |
-| Native AdMob app id ↔ `useTestAds` | must agree | `monetization.ts:77`, Info.plist | `monetization.test.ts:45-55` |
+| Which ad build is which | `ADMODE:test\|live` + `ADS:on\|off\|mock`, each exactly once (replaced the AdMob app id ↔ `useTestAds` lock) | `providers/levelplay.ts`, `adProvider.ts` | `scripts/check-ad-mode.mjs`, `scripts/check-native-sync.mjs`, `adProvider.test.ts` |
 | Every level solvable | BFS through the real `CollisionSystem` | `core/LevelValidator.ts` | `levels.test.ts:112-123` |
 
 ---
@@ -565,18 +623,11 @@ npm run typecheck  # tsc --noEmit                    (package.json:13)
 
 Recorded here because a model reading only the comments would be misled.
 
-1. **Banner placement.** `src/config/monetization.ts:14-15` says a banner lives
-   on the menu and level select "and only here. During play a banner would
-   either eat the playfield or sit exactly under the thumb."
-   `src/scenes/MenuScene.ts:161` repeats "The banner lives here and on level
-   select. Never over the playfield."
-   The code disagrees: `Ads.showBanner()` is called from **`MenuScene.ts:162`
-   and `GameScene.ts:139` only** — never from `LevelSelectScene` or
-   `GalleryScene` — and `Ads.ts:111-116` documents it as "Always on, every
-   scene." The banner is never hidden except by `setAdsRemoved(true)`
-   (`Ads.ts:59`), so in practice it persists across every scene once shown. The
-   newer comments (`MenuScene.ts:192-194`, `GameScene.ts:137-138`,
-   `Theme.ts:186-195`) describe the shipped behaviour; the two above are stale.
+None open. The one recorded here — the banner placement, where the
+`src/config/monetization.ts` header still said the banner lived on the menu and
+level select only — was resolved in September 2026: that header now describes
+what ships (always on, every scene, in the strip `METRICS.bannerReserve` keeps
+clear), matching `Ads.showBanner()` and the scene comments.
 
 ---
 

@@ -1,7 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { admobUnits, adsConfigured, monetization, packSaving } from './monetization';
+import { milestonesBetween } from '../core/Streak';
+import {
+  bestValueId,
+  monetization,
+  packSaving,
+  sellableLadder,
+  starterWorthShowing,
+  type PricedPack,
+} from './monetization';
 
 /*
  * Anchored to this file, not to the working directory. A cwd-relative path
@@ -26,91 +34,64 @@ function plistString(key: string): string {
   return m ? m[1].trim() : '';
 }
 
-describe('AdMob identifiers', () => {
-  it('uses the right shape for app ids and unit ids', () => {
-    const u = admobUnits();
-    // ~ is the APP id, / is an AD UNIT id. Swapping them is the classic silent
-    // no-fill bug, and the two are one character apart.
-    expect(u.appId).toMatch(/^ca-app-pub-\d+~\d+$/);
-    expect(u.banner).toMatch(/^ca-app-pub-\d+\/\d+$/);
-    expect(u.interstitial).toMatch(/^ca-app-pub-\d+\/\d+$/);
-    expect(u.rewarded).toMatch(/^ca-app-pub-\d+\/\d+$/);
-  });
-
-  it('gives every format its own unit', () => {
-    const u = admobUnits();
-    const ids = [u.banner, u.interstitial, u.rewarded];
-    expect(new Set(ids).size).toBe(3);
-  });
-
-  it('reports itself configured', () => {
-    expect(adsConfigured()).toBe(true);
-  });
-
+describe('the native project', () => {
   /*
-   * GADApplicationIdentifier is a native value read at launch, so it cannot
-   * follow the TypeScript flag — it is edited by hand. Shipping a live app id
-   * alongside Google's test units (or the reverse) is an AdMob policy problem,
-   * and "remember to change the plist too" is exactly the kind of thing nobody
-   * remembers at 1am before a submission. So the build checks it.
-   */
-  it('keeps the native app id in step with the units it resolves', () => {
-    /*
-     * GADApplicationIdentifier is native, read at launch, and used to be edited
-     * by hand — "remember to change the plist too" being exactly the thing
-     * nobody remembers at 1am before a submission. It is a build setting now,
-     * so the pair can only disagree if someone edits one of the two defaults.
-     */
-    const pbx = readFileSync(PBXPROJ, 'utf8');
-    const nativeDefault = /GAD_APPLICATION_IDENTIFIER = "([^"]+)"/.exec(pbx)?.[1] ?? '';
-    expect(nativeDefault).toMatch(/^ca-app-pub-\d+~\d+$/);
-    expect(nativeDefault).toBe(admobUnits().appId);
-  });
-
-  /*
-   * The test above only proves the two knobs AGREE. Both-on-TEST agrees, so it
-   * passes — and that is exactly how build 19 came to carry Google's test app
-   * id inside a signed, uploadable ipa.
+   * Google closed the publisher account for good, and a Google ad identifier
+   * left in the native project is not inert: the Google Mobile Ads SDK reads
+   * GADApplicationIdentifier at launch, and KVIZKO crashed at launch with
+   * GADInvalidInitializationException when the LevelPlay sync hook deleted the
+   * key while the SDK was still linked. Nothing of it may remain — not the key,
+   * not the build setting that fed it, not an id in any form.
    *
-   * These do not branch on anything. Neither knob is a checked-in value any
-   * more: `useTestAds` comes from VITE_TEST_ADS at build time and the native id
-   * comes from the GAD_APPLICATION_IDENTIFIER build setting, so a test-ads
-   * build is something you ASK FOR at the archive and cannot leave behind. What
-   * is on disk is always the submission state, and these assert exactly that.
+   * The needle is built from parts so this file does not contain what it
+   * forbids.
    */
-  it('never leaves Google test ad ids anywhere in the native project', () => {
+  const GOOGLE_ID = ['ca', 'app', 'pub'].join('-');
+
+  it('carries no Google ad identifier of any kind', () => {
     const plist = readFileSync(PLIST, 'utf8');
     const pbx = readFileSync(PBXPROJ, 'utf8');
-    expect(plist).not.toContain('3940256099942544');
-    expect(pbx).not.toContain('3940256099942544');
+    for (const [name, text] of [['Info.plist', plist], ['project.pbxproj', pbx]] as const) {
+      expect(text, name).not.toContain('GADApplicationIdentifier');
+      expect(text, name).not.toContain('GAD_APPLICATION_IDENTIFIER');
+      expect(text.includes(GOOGLE_ID), `${name} carries a Google ad id`).toBe(false);
+      expect(/pub-\d{16}/.test(text), `${name} carries a Google publisher id`).toBe(false);
+    }
   });
 
-  it('defaults to live ads when nothing asks for test ads', () => {
-    // VITE_TEST_ADS is unset in a normal run, so this is the shipped default.
-    expect(monetization.useTestAds).toBe(false);
+  /*
+   * The plugin's native side picks its consent UI from this key, and a missing
+   * key means Usercentrics (LevelPlayAdsImpl.swift, `consentMode`), a CMP
+   * Foldwing is not set up for. `custom` is the plugin's own alert, the one
+   * that shows Foldwing's copy (providers/levelplay.ts, consentOptions).
+   */
+  it('selects the custom consent modal the provider writes copy for', () => {
+    expect(plistString('LevelPlayCMPProvider')).toBe('custom');
   });
 
-  it('ships the live publisher account, from a build setting the plist reads', () => {
-    // The plist holds a reference, not a literal: that is what makes the
-    // test-ads build a one-line xcargs override with nothing left on disk.
-    expect(plistString('GADApplicationIdentifier')).toBe('$(GAD_APPLICATION_IDENTIFIER)');
-
-    const pbx = readFileSync(PBXPROJ, 'utf8');
-    const defaults = [...pbx.matchAll(/GAD_APPLICATION_IDENTIFIER = "([^"]+)"/g)].map(
-      (m) => m[1]
-    );
-    // Both configurations, both live. A Debug default that drifted from Release
-    // would mean the simulator and the archive were talking to different apps.
-    expect(defaults.length).toBe(2);
-    for (const d of defaults) expect(d).toBe('ca-app-pub-3307486877162157~5033197766');
-  });
-
-  it('declares ATT and the SKAdNetwork list the SDK needs', () => {
+  it('declares ATT and the SKAdNetwork ids LevelPlay and Unity Ads attribute through', () => {
     const xml = readFileSync(PLIST, 'utf8');
     expect(plistString('NSUserTrackingUsageDescription').length).toBeGreaterThan(20);
     expect(xml).toContain('SKAdNetworkItems');
-    // Google's own network must be present or installs are unattributable.
-    expect(xml).toContain('cstr6suwn9.skadnetwork');
+    // ironSource (LevelPlay itself) and Unity Ads, the network in the waterfall.
+    expect(xml).toContain('su67r6k2v3.skadnetwork');
+    expect(xml).toContain('4dzt52r2t5.skadnetwork');
+    // Google's own network id goes with Google: it attributed installs for an
+    // account that no longer exists, and the no-Google gate refuses it.
+    expect(xml).not.toContain('cstr6suwn9');
+  });
+
+  /*
+   * capacitor-levelplay-ads declares `s.ios.deployment_target = '15.0'`. A
+   * project that still targets 14 either refuses to install the pod or builds
+   * an app that claims to run where its ad SDK cannot. Every configuration,
+   * not just Release: the simulator and the archive must agree.
+   */
+  it('targets iOS 15, the floor the LevelPlay plugin requires', () => {
+    const pbx = readFileSync(PBXPROJ, 'utf8');
+    const targets = [...pbx.matchAll(/IPHONEOS_DEPLOYMENT_TARGET = ([\d.]+);/g)].map((m) => m[1]);
+    expect(targets.length).toBeGreaterThan(0);
+    for (const t of targets) expect(t).toBe('15.0');
   });
 
   /*
@@ -266,13 +247,12 @@ describe('ad cadence', () => {
       (halfHour - a.sessionWarmupSeconds) / a.lateSecondsBetweenInterstitials
     );
     expect(a.maxInterstitialsPerSession).toBeGreaterThanOrEqual(reachable / 2);
-    expect(a.newSessionAfterAwaySeconds).toBeGreaterThanOrEqual(600);
   });
 
   /*
    * The retry path is the dangerous one. A failed attempt lasts three to eight
    * seconds, so the attempt count ALONE would put an ad on screen every twenty
-   * seconds — the pattern AdMob explicitly disables ad serving over.
+   * seconds — the pattern ad networks disable ad serving over.
    *
    * The count is only ever a permission; the clock is the brake. This pins the
    * arithmetic so nobody can make the game more aggressive by editing one
@@ -308,5 +288,165 @@ describe('ad cadence', () => {
 
   it('only offers a skip once the level has really resisted', () => {
     expect(monetization.reveals.offerSkipAfterAttempts).toBeGreaterThanOrEqual(5);
+  });
+});
+
+/*
+ * The faucets are sized together, so they are pinned together. The failure
+ * each guards against is a pack nobody needs: when a day of free reveals comes
+ * close to what the smallest pack holds, the store stops selling anything.
+ */
+describe('the economy', () => {
+  const e = monetization.economy;
+
+  it('gives an engaged player less in a day than the smallest pack holds', () => {
+    const free = monetization.reveals.freeDailyTopUp + e.missions.count * e.missions.reward;
+    expect(free).toBeLessThanOrEqual(4);
+    expect(free).toBeLessThan(monetization.products.revealPacks[0].count);
+  });
+
+  it('caps ad-paid reveals at a daily number that keeps the packs worth buying', () => {
+    expect(e.rewardedRevealsPerDay).toBeGreaterThanOrEqual(3);
+    expect(e.rewardedRevealsPerDay).toBeLessThanOrEqual(10);
+  });
+
+  it('pays a chapter no more than five', () => {
+    expect(e.chapter.halfReward + e.chapter.fullReward).toBeLessThanOrEqual(5);
+  });
+
+  it('pays at most twelve milestone reveals in the first month of a streak', () => {
+    const table = e.streak.milestones as Readonly<Record<number, number>>;
+    const firstMonth = Object.entries(table)
+      .filter(([day]) => Number(day) <= 30)
+      .reduce((s, [, r]) => s + r, 0);
+    expect(firstMonth).toBeLessThanOrEqual(12);
+  });
+
+  /*
+   * The pin above is the table (§0). Bookmark overflow is its own faucet (§2):
+   * a player who never misses and so sits at the cap gets a reveal instead on
+   * each bookmark day. Pinned too, so it cannot grow unnoticed.
+   */
+  it('adds at most one overflow reveal per bookmark day in that month', () => {
+    const days = [...Array(30)].map((_, i) => i + 1);
+    const paid = e.streak.milestones as Readonly<Record<number, number>>;
+    const table = days.reduce((s, d) => s + (paid[d] ?? 0), 0);
+    const at: readonly number[] = e.streak.bookmarkAt;
+    const bookmarkDays = days.filter((d) => at.includes(d) || d % e.streak.bookmarkEvery === 0);
+    const atCap = milestonesBetween(0, 30, e.streak.bookmarkMax, e.streak).reduce((s, m) => s + m.reveals, 0);
+    expect(atCap).toBe(table + bookmarkDays.length * e.streak.overflowReveals);
+    expect(atCap).toBeLessThanOrEqual(15);
+  });
+
+  /*
+   * The starter reuses the one product id never sold. Its count is in its id
+   * for the same reason every pack's is, and it must not appear on the ladder:
+   * a once-per-install offer sold as an ordinary rung could be bought forever.
+   */
+  it('sells the starter as reveals25, once, off the ladder', () => {
+    const s = e.starter;
+    expect(s.id.endsWith('.reveals25')).toBe(true);
+    expect(Number(/\.reveals(\d+)$/.exec(s.id)?.[1])).toBe(s.count);
+    expect(monetization.products.revealPacks.map((p) => p.id)).not.toContain(s.id);
+    expect(s.afterWins).toBeGreaterThanOrEqual(1);
+  });
+
+  it('keeps the bookmark and repair rules inside their own limits', () => {
+    expect(e.streak.bookmarkMax).toBeGreaterThanOrEqual(1);
+    expect(e.streak.bookmarkAt.every((d) => d > 0)).toBe(true);
+    expect(e.repair.maxGapDays).toBe(1);
+    expect(e.repair.cooldownDays).toBeGreaterThanOrEqual(7);
+  });
+
+  it('keeps the win frame move switchable off, and never enlarging', () => {
+    for (const s of [monetization.ui.winFrameScale, monetization.ui.winFrameScaleDaily]) {
+      expect(s).toBeGreaterThan(0.5);
+      expect(s).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+/*
+ * The ladder as each storefront actually prices it. Apple's tiers are not
+ * proportional across currencies, so the same three ids make an honest ladder
+ * in dollars and a trap in dinars or pounds unless the dominated rung is hidden.
+ */
+describe('the sellable ladder', () => {
+  const pack = (count: number, micros: number) => ({
+    id: `com.noqyris.foldwing.reveals${count}`,
+    count,
+    priceMicros: micros,
+  });
+  const counts = (packs: readonly { count: number }[]) => packs.map((p) => p.count);
+
+  it('keeps every rung in dollars, and badges the thirty', () => {
+    const kept = sellableLadder([pack(10, 990_000), pack(20, 1_490_000), pack(30, 1_990_000)]);
+    expect(counts(kept)).toEqual([10, 20, 30]);
+    expect(bestValueId(kept)).toBe('com.noqyris.foldwing.reveals30');
+  });
+
+  it('drops the twenty where it costs the same as the thirty (Serbia)', () => {
+    const kept = sellableLadder([pack(10, 990_000), pack(20, 1_990_000), pack(30, 1_990_000)]);
+    expect(counts(kept)).toEqual([10, 30]);
+    expect(bestValueId(kept)).toBe('com.noqyris.foldwing.reveals30');
+  });
+
+  it('drops the ten where it costs the same as the twenty (UK)', () => {
+    // The thirty at £1.99 is dearer per reveal than twenty at £0.99: gone too.
+    expect(counts(sellableLadder([pack(10, 990_000), pack(20, 990_000), pack(30, 1_990_000)]))).toEqual([20]);
+    // Priced below the twenty per reveal, it stays.
+    expect(counts(sellableLadder([pack(10, 990_000), pack(20, 990_000), pack(30, 1_290_000)]))).toEqual([20, 30]);
+  });
+
+  it('judges nothing before the store has answered', () => {
+    const waiting = [pack(10, 0), pack(20, 1_490_000), pack(30, 0)];
+    expect(sellableLadder(waiting)).toEqual(waiting);
+    expect(bestValueId(waiting)).toBeNull();
+  });
+
+  it('keeps the fields the store row needs', () => {
+    const rich = [{ ...pack(10, 990_000), title: 'Ten', priceString: '$0.99' }];
+    expect(sellableLadder(rich)[0].priceString).toBe('$0.99');
+  });
+
+  it('keeps one of two identical rungs', () => {
+    expect(counts(sellableLadder([pack(10, 990_000), { ...pack(10, 990_000), id: 'dup' }]))).toEqual([10]);
+  });
+
+  it('badges nothing alone, or on a saving too small to claim', () => {
+    expect(bestValueId([pack(10, 990_000)])).toBeNull();
+    // 20 at $1.90 saves 4% on the ten: true, but not worth a badge.
+    expect(bestValueId([pack(10, 990_000), pack(20, 1_900_000)])).toBeNull();
+  });
+});
+
+describe('the starter offer', () => {
+  const usd: PricedPack[] = [
+    { count: 10, priceMicros: 990_000 },
+    { count: 20, priceMicros: 1_490_000 },
+    { count: 30, priceMicros: 1_990_000 },
+  ];
+
+  it('is a deal at $0.99 for twenty-five, and says how much of one', () => {
+    const starter = { count: 25, priceMicros: 990_000 };
+    expect(starterWorthShowing(starter, usd)).toBe(true);
+    expect(packSaving(usd[0], starter)).toBe(60);
+  });
+
+  it('is not shown where it is no cheaper than the thirty', () => {
+    // €1.99 for 25 against €1.99 for 30 — what $1.49 became in euros.
+    expect(starterWorthShowing({ count: 25, priceMicros: 1_990_000 }, [{ count: 30, priceMicros: 1_990_000 }])).toBe(
+      false
+    );
+  });
+
+  it('is not shown on prices nobody has seen', () => {
+    expect(starterWorthShowing({ count: 25, priceMicros: 0 }, usd)).toBe(false);
+    expect(starterWorthShowing({ count: 25, priceMicros: 990_000 }, [{ count: 10, priceMicros: 0 }])).toBe(false);
+  });
+
+  it('is not shown with no rung on sale to be a saving against', () => {
+    // The store returned the starter and no pack: "save 60%" of nothing.
+    expect(starterWorthShowing({ count: 25, priceMicros: 990_000 }, [])).toBe(false);
   });
 });
