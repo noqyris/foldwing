@@ -1,6 +1,8 @@
 PODS:
   - Capacitor (8.5.2):
     - CapacitorCordova
+  - CapacitorApp (8.1.1):
+    - Capacitor
   - CapacitorCommunityInAppReview (8.0.0):
     - Capacitor
   - CapacitorCordova (8.5.2)
@@ -40,6 +42,7 @@ PODS:
 
 DEPENDENCIES:
   - "Capacitor (from `../../node_modules/@capacitor/ios`)"
+  - "CapacitorApp (from `../../node_modules/@capacitor/app`)"
   - "CapacitorCommunityInAppReview (from `../../node_modules/@capacitor-community/in-app-review`)"
   - "CapacitorCordova (from `../../node_modules/@capacitor/ios`)"
   - "CapacitorFilesystem (from `../../node_modules/@capacitor/filesystem`)"
@@ -65,6 +68,8 @@ SPEC REPOS:
 EXTERNAL SOURCES:
   Capacitor:
     :path: "../../node_modules/@capacitor/ios"
+  CapacitorApp:
+    :path: "../../node_modules/@capacitor/app"
   CapacitorCommunityInAppReview:
     :path: "../../node_modules/@capacitor-community/in-app-review"
   CapacitorCordova:
@@ -86,6 +91,7 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   Capacitor: 89067779e14fb7ea56af07b4817f45d1f0c2a269
+  CapacitorApp: 305bd13c44f6f9d164e2ee66a4faa956ed8c0e06
   CapacitorCommunityInAppReview: 4492bdd34aad4d27ed87949376022cc93b294ea1
   CapacitorCordova: 5bec5648cbd09a176ce34ce5e7b6cdabb2c8a327
   CapacitorFilesystem: b2bbd84bb91c177906c9dbc252864cb71ab9957b
@@ -102,6 +108,6 @@ SPEC CHECKSUMS:
   UnityAds: aac7752619961224969a1bfea8b5077d2b93005f
   UnityCoherenceLib: d9be08c5b9c2880cb220c7ecd643f97ebda422b7
 
-PODFILE CHECKSUM: 8a5ebb7d8ce35e377a8a40546dbfae0b5d39731a
+PODFILE CHECKSUM: f5b421152ca7f50d6fc8670286d11c69fd8d8e60
 
 COCOAPODS: 1.16.2
