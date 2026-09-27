@@ -51,7 +51,7 @@ SHA-**256** is the long one; don't paste the shorter SHA-1 into a SHA-256 field.
 
 Unlike Apple there's no separate keyword field — the descriptions *are* the keywords.
 
-**Data safety** with AdMob: data **is** collected/shared — *Device or other IDs* (Advertising), typically *App activity*; encrypted in transit; not linked to an account. Answering "no data collected" while shipping ads is a policy violation.
+**Data safety** with an ad SDK (AdMob, LevelPlay): data **is** collected/shared — *Device or other IDs* (Advertising), typically *App activity*; encrypted in transit; not linked to an account. Answering "no data collected" while shipping ads is a policy violation.
 
 ## Uploading
 
@@ -75,4 +75,4 @@ Play Console is an **Angular Material SPA** and fights naive automation. What wo
 ## Monetization notes
 
 - The Remove-Ads IAP needs a **Google Payments profile** (bank + tax) before it can be sold — that's the developer's own legal/financial data, so it must be completed by them.
-- Android AdMob ads typically don't fill until the AdMob app is approved, which usually follows the app going live. Plan for delayed Android ad revenue.
+- (AdMob era) Android AdMob ads typically didn't fill until the AdMob app was approved, which usually followed the app going live. On LevelPlay a new app may also fill little at first. Either way, plan for delayed Android ad revenue — and never put an ads-on build on a closed or internal track: testers get ads-off builds.

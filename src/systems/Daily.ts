@@ -1,13 +1,18 @@
 /**
- * Daily Fold — one maze a day, the same for the whole world, no server.
+ * Daily Fold — one maze a day, the same on every phone for a date, no server.
  *
  * The maze generator is a pure function of a seed, so seed = date IS the
- * synchronization mechanism: every phone that computes today's fold computes
+ * synchronization mechanism: every phone that computes a date's fold computes
  * the identical level. The candidate loop applies the same acceptance gates
  * the shipped set uses (playable with room for a hand, mirror engaged, route
  * that winds), stepping the seed deterministically until one passes — the
  * same date can therefore never produce different mazes on different phones,
  * only the same first-accepted candidate.
+ *
+ * "Today" is the player's LOCAL date (core/CalendarDay), so the fold changes at
+ * each player's own midnight: at one instant, two time zones can be on two
+ * different dates and therefore two different mazes. GameCenter.ts spells out
+ * what that means for the one daily board.
  *
  * Difficulty sits mid-to-hard and wobbles by date. The daily is for players
  * who come back on purpose; it should never be the tutorial.
@@ -83,7 +88,7 @@ export function dailyLevel(dateISO: string): Level {
    *
    * Now the loop cannot end without something `validateLevel` has cleared with
    * room for a hand, and if even that is impossible the daily falls back to a
-   * hand-authored tutorial level rather than inventing one.
+   * shipped tutorial maze — proved at build time — rather than inventing one.
    */
   let playableOnly: Level | null = null;
 
@@ -111,9 +116,9 @@ export function dailyLevel(dateISO: string): Level {
   if (playableOnly) return remember(dateISO, playableOnly);
 
   // Two hundred unplayable candidates has never been observed and would mean
-  // the generator itself is broken. Serving a proved hand-authored level beats
+  // the generator itself is broken. Serving a proved shipped tutorial maze beats
   // serving a maze nobody has proved anyone can finish.
-  return remember(dateISO, finish(dateISO, TUTORIAL_LEVELS[4], undefined));
+  return remember(dateISO, finish(dateISO, TUTORIAL_LEVELS[4], TUTORIAL_LEVELS[4].parPx));
 }
 
 function finish(dateISO: string, level: Level, parPx: number | undefined): Level {

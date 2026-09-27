@@ -10,9 +10,14 @@
  * was called.
  */
 
-import { describe, expect, it } from 'vitest';
-import { buildTimeline, outroStage, timelineDurationMs, type RunAttempt } from './ReplayVideo';
+import { describe, expect, it, vi } from 'vitest';
+
+// The painters the clip shares with the game reach the look kit, whose
+// modules import Phaser at load; nothing here draws, so a stand-in will do.
+vi.mock('phaser', () => ({ default: {} }));
+import { buildTimeline, MOVING_TAIL, outroStage, timelineDurationMs, type RunAttempt } from './ReplayVideo';
 import { strokeUpTo } from './FigureCard';
+import { strokeWidths } from './ShareCard';
 
 const attempt = (ms: number, died: boolean): RunAttempt => ({
   points: [
@@ -196,5 +201,40 @@ describe('the closing sequence', () => {
     expect(outro.kind).toBe('outro');
     // Everything is revealed with time to spare before the clip ends.
     expect(outro.durationMs).toBeGreaterThan(2500);
+  });
+});
+
+/*
+ * The clip keeps the ink it has drawn and repaints only the line's last
+ * MOVING_TAIL samples each frame (that is what keeps level 300 under the
+ * ceiling). That is only honest if nothing before them can change as the
+ * line grows: the widths of a longer line agree with a shorter one's
+ * everywhere but that tail.
+ */
+describe('the ink a frame keeps', () => {
+  it('only ever changes within the last MOVING_TAIL samples as the line grows', () => {
+    let seed = 11;
+    const rnd = (): number => {
+      seed = (seed * 16807) % 2147483647;
+      return seed / 2147483647;
+    };
+    const points = [{ x: 0, y: 0 }];
+    const times = [0];
+    for (let i = 1; i < 240; i++) {
+      points.push({ x: points[i - 1].x + (rnd() - 0.5) * 12, y: points[i - 1].y - 2 - rnd() * 9 });
+      times.push(times[i - 1] + 4 + rnd() * 30);
+    }
+    const stroke = { points, times };
+    for (let ms = 400; ms < times[times.length - 1]; ms += 37) {
+      const before = strokeUpTo(stroke, ms);
+      const after = strokeUpTo(stroke, ms + 33);
+      if (before.points.length < 16) continue;
+      const wb = strokeWidths(before, 10);
+      const wa = strokeWidths(after, 10);
+      for (let i = 0; i < before.points.length - MOVING_TAIL; i++) {
+        expect(wa[i]).toBeCloseTo(wb[i], 9);
+        expect(after.points[i]).toEqual(before.points[i]);
+      }
+    }
   });
 });

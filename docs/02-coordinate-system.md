@@ -3,11 +3,13 @@
 >
 > This page describes the retired **100-level set of bar obstacles** and the
 > generator that produced it. Neither still exists. The game now ships 300
-> levels — five hand-authored and 295 spanning-tree mazes built by
-> `src/core/MazeGen.ts`, which is also what the Daily Fold runs on the phone —
-> so every level count below is wrong, and any passage about wall placement,
-> interlock reservation or inert-wall stripping describes code that was
-> deleted with the bar set.
+> spanning-tree mazes built by `src/core/MazeGen.ts`, which is also what the
+> Daily Fold runs on the phone — so every level count below is wrong, and any
+> passage about wall placement, interlock reservation or inert-wall stripping
+> describes code that was deleted with the bar set. The tutorial went too: the
+> five hand-authored bar levels, LOCKED wherever they appear below, were
+> replaced in September 2026 by five small mazes from
+> `scripts/genTutorialMazes.ts`, and save schema 3 forgets clears of the old ones.
 >
 > The "Source files" line-count tables are wrong too, and that matters more
 > than it looks: the `file:line` citations throughout were counted against
@@ -121,11 +123,27 @@ export const BASE_WIDTH = 750;
 export const BASE_HEIGHT = 1334;
 ```
 
-Rationale, verbatim from `src/render/Theme.ts:22-29`: Phaser runs FIT +
-CENTER_BOTH against this fixed size, so game coordinates never change with the
-device; 750×1334 is a 2× iPhone-SE portrait — 9:16, the widest common portrait
-aspect, so taller phones **letterbox** into the paper-coloured page background
-rather than **pillarboxing** and stealing the width the mirror needs.
+750×1334 is a 2× iPhone-SE portrait — 9:16, the widest common portrait aspect —
+and it is the **reference** every design and the playfield are drawn against.
+The width is fixed on every device (the mirror needs all of it).
+
+**The height is adaptive.** It used to be this fixed 1334 everywhere, so a
+~19.5:9 iPhone drew the whole game in a 9:16 box with bands of empty paper above
+and below. Now the logical height follows the safe area:
+
+```ts
+H = clamp(round(750 × safeHeight / safeWidth), BASE_HEIGHT, MAX_HEIGHT = 1720)
+```
+
+(`Theme.adaptiveHeight`; `SafeArea.fitShape` decides it together with the
+banner lift, and `main.ts` applies it with `game.scale.setGameSize(750, H)` on
+every relayout). An iPhone 18 Pro is 750×1451, an iPhone 16/17 1448–1467, a Pro
+Max 1466, a 320pt Split View pane 1613; the SE and every iPhone Duo shape stay
+1334 and letterbox sideways as before. `Theme.viewHeight()` is the one source of
+truth for the current height; `BASE_HEIGHT` keeps meaning the 9:16 reference.
+The playfield never changes size: it is `boardDrop(H)` = ⌊(H−1334)/2⌋ lower
+(`Theme.boardInset`), i.e. centred between the HUD and the bottom band, and
+still 702×1102 — the geometry the levels are proved in.
 
 `750 / 1334 = 0.5622188905547226`, which is why `Theme.test.ts:25` asserts
 `BASE_WIDTH / BASE_HEIGHT < 0.5626` — a bound set fractionally *above* 9:16 =
@@ -173,20 +191,20 @@ manager, configured once at `src/main.ts:16-21`:
   },
 ```
 
-FIT gives `scale = min(cssWidth / 750, cssHeight / 1334)` uniformly on both axes.
-The repo states the practical number at `src/core/LevelValidator.ts:300`:
-**0.52 css px per base px on a 390pt-wide phone** (390 / 750 = 0.52). Because the
-base aspect is slightly *wider* than any common portrait phone, the width term
-almost always wins and the leftover height becomes an invisible paper-coloured
-letterbox band (`src/main.ts:13-15` sets `backgroundColor: theme().paper`;
-`index.html` paints the page the same `#e9ebe4`).
+FIT gives `scale = min(cssWidth / 750, cssHeight / H)` uniformly on both axes,
+where `H` is the adaptive height above — so on a tall phone both terms are equal
+and the canvas fills the safe area exactly, with no letterbox. The repo states
+the practical number at `src/core/LevelValidator.ts:300`: **0.52 css px per base
+px on a 390pt-wide phone** (390 / 750 = 0.52). Only a shape wider than 9:16 (or
+taller than MAX_HEIGHT) leaves paper-coloured bands (`backgroundColor:
+theme().paper`; `index.html` paints the page the same `#e9ebe4`).
 
 Two things keep this space from leaking into a bug, and both are load-bearing:
 
 | mechanism | location | what breaks without it |
 | --- | --- | --- |
-| `game.scale.refresh()` on `resize`, `orientationchange`, `visualViewport` resize/scroll, and at 50/250/600/1200 ms | `src/main.ts:47-54` | inside a Capacitor webview the size settles *after* game creation without firing `resize`; a stale canvas rect puts every touch a few points off target |
-| `position: fixed; inset 0` on `html, body, #app` | `index.html` (the `#app` block) | a rubber-banding iOS webview shifts the canvas bounding rect Phaser caches for input, so touches land offset from the visuals |
+| `getParentBounds()` + `game.scale.refresh()` on `resize`, `orientationchange`, `visualViewport` resize/scroll, at 50/250/600/1200 ms, and whenever the safe-area box resizes (plus Phaser's own poll every 100 ms) | `src/main.ts` | inside a Capacitor webview the size settles *after* game creation without firing `resize`; a stale canvas rect puts every touch a few points off target |
+| `position: fixed` on `html, body` (inset 0) and on `#app` (inset by `env(safe-area-inset-*)`, each side on its own) | `index.html` | a rubber-banding iOS webview shifts the canvas bounding rect Phaser caches for input; and FIT fits the canvas into the SAFE area, so no status bar, camera or home indicator ever sits on it (see 01-architecture §3b) |
 
 Consequence for reading the code: `pointer.x` / `pointer.y` inside a scene
 (`src/scenes/GameScene.ts:205`, `:285`) are **already base canvas pixels**. Never
@@ -312,8 +330,9 @@ pf.bottom = 88 + 1102       = 1190
 pf.axisX  = 24 + 702 * 0.5  = 375
 ```
 
-Level `l1`'s second wall, pinned verbatim at `src/data/levels.test.ts:47`:
-`{ x: 0.5, y: 0.64, w: 0.28, h: 0.06 }`.
+The bar-era tutorial's `l1`, second wall — pinned verbatim until the tutorial
+became mazes in September 2026, and still the clearest case of a far wall that
+starts on the axis: `{ x: 0.5, y: 0.64, w: 0.28, h: 0.06 }`.
 
 ```text
 toScreenRect({x:0.5, y:0.64, w:0.28, h:0.06}):
@@ -337,7 +356,7 @@ at `src/scenes/GameScene.ts:156-159` as `{ x: 2*axis - (w.x + w.w), y, w, h }`
 The same wall on a 390pt-wide phone (scale 0.52): the band spans
 `178.44 * 0.52 = 92.7888` to `375 * 0.52 = 195` CSS px.
 
-`l1`'s start `{x: 0.14, y: 0.88}` → `toScreen` → `x = 24 + 98.28 = 122.28`,
+That level's start `{x: 0.14, y: 0.88}` → `toScreen` → `x = 24 + 98.28 = 122.28`,
 `y = 88 + 969.76 = 1057.76`. (Floating point: JS yields `122.28000000000002`.
 Nothing rounds; `roundPixels: false` at `main.ts:32`.)
 
@@ -382,8 +401,8 @@ export const METRICS = {
 | --- | --- | --- | --- | --- |
 | `hitRadius` | `:125` | `pt(2.6)` = **5.2** | collision radius passed to `CollisionSystem` (`GameScene.ts:151`) and to every level validator | LOCKED. Measured from the stroke **centreline**; see §6 |
 | `sampleMinDist` | `:128` | `pt(2.6)` = **5.2** | minimum travel before `StrokeRecorder` keeps a new raw sample (`GameScene.ts:119`) | equal to `hitRadius`, so a rejected sample always sits within one hit radius of a tested one — that is what makes dropping it safe (`Theme.test.ts:93-98`) |
-| `touchOffsetY` | `:134` | `pt(42)` = **84** | how far ABOVE the finger the drawing cursor sits on touch (`GameScene.ts:292`) | the thumb must never cover the live end of the stroke on a 375pt-wide screen |
-| `touchOffsetRampPx` | `:144` | `pt(21)` = **42** | finger **travel** (not time) over which that offset eases in (`GameScene.ts:293`) | a time-based ramp slides the cursor while the finger is still and draws — and collision-tests — ink nobody asked for. During the ramp the cursor moves at twice finger speed |
+| `touchOffsetY` | `:134` | `pt(42)` = **84** | how far ABOVE the finger the drawing cursor sits on touch (`GameScene.cursorFor`) | the thumb must never cover the live end of the stroke on a 375pt-wide screen. Since 1.4 it is a floor, not the value: `cursorFor` uses `max(touchOffsetY, 42 × displayScale.y)`, so the lift stays 42 **on-glass** points at small canvas scales — in a 0.317 Split View pane the base-unit offset was only 27pt of glass. Unchanged at scale ≥ 0.5 |
+| `touchOffsetRampPx` | `:144` | `pt(21)` = **42** | finger **travel** (not time) over which that offset eases in (`GameScene.cursorFor`; likewise floored at 60 × `displayScale.y` since 1.4) | a time-based ramp slides the cursor while the finger is still and draws — and collision-tests — ink nobody asked for. During the ramp the cursor moves at twice finger speed |
 | `renderMaxSpacing` | `:156` | `pt(5)` = **10** | longest gap fed to the renderer's smoothing pass (`InkRenderer.ts:36`, `ShareCard.ts:151`) | Chaikin cuts corners in proportion to spacing; flick samples land 80–300px apart, so the smoothed line would visibly bow through a corner the RAW path legally cleared. Splitting first is geometrically free (inserted points lie exactly on the raw path) |
 | `startRadius` | `:159` | `pt(10)` = **20** | visual radius of the start dot (`InkRenderer.ts:156`) | |
 | `startGrabFactor` | `:162` | **2.4** (unitless) | multiplier on `startRadius` for how close a pointerdown must land to begin a stroke (`GameScene.ts:206`) | grab radius = `pt(24)` = 48 base px, pinned at `Theme.test.ts:123` |
@@ -398,7 +417,7 @@ export const METRICS = {
 | `winHoldMs` | `:182` | **180** | delay before the win figure settles (`InkRenderer.ts:289`) | |
 | `winSettleMs` | `:183` | **350** | settle tween duration (`InkRenderer.ts:290`) | |
 | `winSettleFrom` | `:184` | **0.97** | scale the win figure starts at (`InkRenderer.ts:283`) | |
-| `bannerReserve` | `:195` | `pt(58)` = **116** | bottom band of the canvas menu chrome must not use (`LevelSelectScene.ts:75`, `GalleryScene.ts:92`, `GameScene.ts:463`, `:519`, `:592`) | the AdMob banner is a NATIVE view pinned to the bottom of the **screen**, not a game object; on a 9:16 phone there is no letterbox and it covers real canvas |
+| `bannerReserve` | `:195` | `pt(58)` = **116** | bottom band of the canvas menu chrome must not use (`LevelSelectScene.ts:75`, `GalleryScene.ts:92`, `GameScene.ts:463`, `:519`, `:592`) | the ad banner (LevelPlay, formerly AdMob) is a NATIVE view pinned to the bottom of the **screen**, not a game object; on a 9:16 phone there is no letterbox and it covers real canvas |
 | `inset.top` | `:207` | `pt(44)` = **88** | playfield top margin | |
 | `inset.right` | `:208` | `pt(12)` = **24** | playfield right margin | equal to `left`, which is what puts `axisX` at 375 |
 | `inset.bottom` | `:209` | `pt(72)` = **144** | playfield bottom margin | must clear `bannerReserve` (144 > 116). "A start dot under an ad is both unplayable and an accidental-click generator, which is the fastest way to lose ad serving" (`Theme.ts:203-204`) |
@@ -584,7 +603,6 @@ Grepped across `*.ts`, `*.md`, `*.json`, `*.html` (excluding `node_modules`).
 | `src/core/Ribbon.ts:11` | `fixed hit radius (LOCKED), so how thick the ink happens to look never changes` |
 | `src/render/Theme.ts:115` | `LOCKED. Collision radius 2.6pt against a 5pt rendered nib.` |
 | `src/render/Theme.ts:123` | `LOCKED value and so is the author's call, not this file's.` |
-| `src/data/levels.ts:18` | `The five hand-authored levels. These numbers are tuned and LOCKED — the` |
 | `src/scenes/GameScene.ts:238` | `walls — LOCKED. Pointer samples arrive about once per frame, so during a` |
 | `src/core/Geometry.test.ts:264` | `LOCKED rule 2. A flick across the screen delivers pointer samples hundreds` |
 | `src/core/Playfield.test.ts:53` | `it('agrees with the LOCKED normalized definition mirror(p) = {1-x, y}', ...)` |
@@ -592,12 +610,18 @@ Grepped across `*.ts`, `*.md`, `*.json`, `*.html` (excluding `node_modules`).
 | `src/core/StrokeRecorder.test.ts:219` | `The renderer smooths; collision does not. That split is deliberate and LOCKED` |
 | `src/render/Theme.test.ts:16` | `and the LOCKED values announce themselves if anyone edits them.` |
 | `src/render/Theme.test.ts:65` | `describe('LOCKED rule 3 — hit radius against the rendered nib', ...)` |
-| `src/data/levels.test.ts:39` | `// LOCKED. The generator appends; it must never rewrite these.` |
 | `src/data/levels.test.ts:57` | `// LOCKED: the player may only draw where x < 0.5.` |
 | `src/data/levels.test.ts:82` | `LOCKED rule 1: obstacles must be asymmetric. If the right half mirrored the` |
 | `README.md:168` | `data/types.ts           Level shape + the LOCKED coordinate system` |
 | `README.md:259` | `LOCKED rule 3 says the collision radius should be smaller than the rendered` |
 | `README.md:267` | `thereabouts. That is a change to a LOCKED value, so it is the author's call, not` |
+
+Two markers went with the bar tutorial in September 2026: the header of the
+hand-authored tutorial ("These numbers are tuned and LOCKED — the generator
+appends after them") and its test comment ("LOCKED. The generator appends; it
+must never rewrite these."). The tutorial is now five generated mazes, pinned by
+`levels.test.ts` › `keeps the tutorial mazes exactly as generated` and rewritten
+only by `npx vite-node scripts/genTutorialMazes.ts` — pinned, but not LOCKED.
 
 The three numbered LOCKED rules, as named by the tests and README (`README.md:200-211`):
 

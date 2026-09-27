@@ -26,6 +26,67 @@ function dataUrlToBlob(dataUrl: string): Blob {
   return new Blob([buf], { type: 'image/png' });
 }
 
+/**
+ * The name a shared file goes out under: `Foldwing - First reflection.png`.
+ *
+ * iOS titles the share sheet with the file's name and hands the same name to
+ * whoever receives the file, so `foldwing-l1-1790060455955` — an id and an epoch
+ * — was the first thing anyone saw of a figure. The game and the fold read as
+ * what they are. Only what a file system or a file URL would object to is
+ * dropped; writing the same name twice just replaces a cache file that has
+ * already been handed over.
+ */
+export function shareFileName(foldName: string, ext: 'png' | 'mp4'): string {
+  const clean = foldName
+    .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60)
+    .trim();
+  return `Foldwing - ${clean || 'a fold'}.${ext}`;
+}
+
+/**
+ * How long a screen ignores taps after a share settles.
+ *
+ * iOS 26 presents the share sheet as a partial sheet with no dimming, and the
+ * tap that dismisses it by touching the page above it ALSO reaches the page —
+ * so "close the share sheet" was read as whatever that tap would otherwise
+ * have meant: the next fold, or the card under the finger.
+ */
+export const SHARE_QUIET_MS = 400;
+
+/**
+ * How long a tap on a way OUT (‹) that lands while a share is up waits for the
+ * share to settle before it is believed.
+ *
+ * That tap reaches the page before the share settles — the sheet reports its
+ * dismissal only once it has animated away — so at the moment it lands, "the
+ * tap that closed the sheet" and "a player leaving a share that never settled"
+ * look the same. The first settles within this window; the second does not,
+ * and ‹ still has to work then, or a stuck share traps the player. Measured on
+ * the iOS 26.5 simulator: the share settles 0.56–0.58s after the dismissing
+ * tap lifts (four of four, win screen and Gallery), so this is twice that.
+ */
+export const SHARE_DISMISS_WAIT_MS = 1200;
+
+/**
+ * Whether `pending` settles — either way — within `ms` of now.
+ *
+ * Wall clock: the game loop may be throttled while a system sheet is up, and a
+ * scene timer would stretch with it.
+ */
+export function settlesWithin(pending: Promise<unknown>, ms: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), ms);
+    const settled = (): void => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    pending.then(settled, settled);
+  });
+}
+
 export interface ShareRequest {
   readonly dataUrl: string;
   readonly title: string;

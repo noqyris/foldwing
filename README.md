@@ -13,7 +13,7 @@ When you win, the stroke and its mirror close into a symmetric figure.
     npm install
     npm run dev        # http://localhost:5173
     npm test           # the whole level set is re-proved on every run
-    npm run build      # tsc --noEmit && vite build
+    npm run build      # typecheck, the suite, then vite build
     SIM=<udid> npm run ios:run   # build + install + launch on a simulator
 
 No test count here on purpose. The one this line used to carry was stale, and a
@@ -29,7 +29,8 @@ snapshot of a generated set would pin nothing.
 
 Built and verified: the core loop, `Geometry` with 60 unit tests, home / level
 select / gallery, progress persistence, audio and haptics, the share pipeline,
-the Capacitor iOS shell, and AdMob + Remove Ads.
+the Capacitor iOS shell, and ads + Remove Ads (AdMob then; Unity LevelPlay since
+September 2026, after Google closed the AdMob account).
 
 Shipped since that list was written, and none of it in it:
 
@@ -51,28 +52,107 @@ Shipped since that list was written, and none of it in it:
   what share of your deaths were the *reflection* dying, and how much of the
   level is folded. It is a game rating in the sense Elo is one, and marketing
   copy must keep it that way (see `MARKETING.md`).
-- **The reveal pack**, a 20-reveal consumable offered beside the rewarded
+- **The reveal packs**, 10, 20 and 30 reveals, offered beside the rewarded
   video when the stash runs out — never instead of it.
 - **The web daily**: one build flag turns the same codebase into an
   install-free page that boots straight into today's fold and points a
   finished player at the App Store.
 - **A settings sheet** — sound, haptics, reduced motion — which is also the
   first time any of those three had a caller rather than a default.
+- **The UIScene life cycle, on Capacitor 8.5.** Anything built with the iOS 27
+  SDK must adopt it or it does not launch on iOS 27 at all. Adopted by hand —
+  a `SceneDelegate` that forwards to Capacitor, the scene manifest, and the
+  same `Main` storyboard — still on CocoaPods (see `docs/11-build-release.md`).
+- **The game lives in the safe area.** `#app` is inset by
+  `env(safe-area-inset-*)` on each side, so the board never sits under a status
+  bar, a camera or the home indicator, and the paper still runs to every edge.
+  That is what iPhone Duo needs — an 84pt status strip down one side of the
+  outer display — and a rotation or fold mid-stroke now abandons the line like
+  a lift instead of killing it through a wall.
+
+And 1.4, whose one idea is that every earned thing should be visible:
+
+- **Daily missions.** Three small goals a day — the first always today's Daily —
+  each paying a reveal the moment it is done, with no claim button. They open
+  after the tutorial, deal themselves from the date, and roll over at midnight.
+- **Streak bookmarks and the repair.** The Daily streak earns bookmarks (one on
+  day 3 and every 7th day, two held at most), and a bookmark spends itself on a
+  missed day, so the streak protects instead of punishing. A streak broken by a
+  single day can now and then be repaired with a short video — free with Remove
+  Ads, or where no ad can play. Milestones on days 7, 14, 30, 50 and 100 pay
+  reveals. Nothing ever says "you lost".
+- **Chapter marks.** Every chapter of twenty pays a reveal halfway and two at the
+  end — cleared levels only, so a skipped one is a reason to go back — and players
+  who had finished chapters before 1.4 were paid for them once.
+- **A result card after every win.** The board steps back, and the card says how
+  close the line came to par, the time against your best, the chapter as a
+  twenty-cell bar, and everything the win paid, each reward flying into the pill
+  it lands in. A tap anywhere off the card still moves on.
+- **A real store.** The reveal balance is always on the menu with a "+", the Store
+  is a button beside Levels and Gallery, and one store sheet sells everywhere: a
+  free rung (a video, five a day), a one-time starter pack after the fifth win,
+  the packs the local prices make honest, and Remove Ads — which now also makes
+  skips free. The browser's mock build sells through a fake store that says FAKE
+  PURCHASE in large letters and never ships anywhere else.
+- **Reminders that know the player.** Local notifications only: a little before
+  the time you usually open the game, a streak saver on the evening it matters, a
+  short win-back tail that stops after thirty days, and a tap that opens today's
+  Daily. The permission is only ever asked after the player taps [Remind me].
+- **A review prompt that waits for a peak** — once per app version, from the
+  second day, on a late medal or a Daily that takes the streak to three, and never
+  after a struggle, a skip, a purchase or in the same beat as anything else.
+- **Failure that teaches.** A contact ring where the line died, the wall that did
+  it flashing, a stronger ghost with an × at the death, the first reflection death
+  explained once, a near-miss line ("furthest yet 74%"), and a ghost hand drawing
+  the first stretch of level 1.
+- **Duo-ready.** The touch offset is measured in on-glass points, so it stays a
+  thumb's width in a small Split View pane; a board with 40pt of paper each side
+  sits on a desk tone; and the scene manifest is proven in every build.
+- **A new icon**, "Mirror Path", with one alternate in the binary for a store test.
 
 Still open from the original plan: the debug overlay (step 5).
 
-**300 levels**, five hand-authored and 295 generated MAZES. Each is a
-spanning-tree labyrinth carved over the drawable half — one true route from
-start to goal, everything else a dead end — with a difficulty-growing fraction
-of its walls emitted on the FAR half instead. Mirroring makes that a pure
-visibility choice: a wall at `[a, a+w]` and a far wall at `[1−a−w, 1−a]`
-constrain the stroke+reflection pair identically, so the maze the player must
-solve is partly invisible where they draw, and the only way to tell a real
-fork from a trap is to fold the far half across in their head. Every level is
-*proved* solvable by `LevelValidator` — a BFS gated by the real
+**300 levels**, all of them MAZES: a five-level tutorial and 295 generated
+levels. Each is a spanning-tree labyrinth carved over the drawable half — one
+true route from start to goal, everything else a dead end — with a
+difficulty-growing fraction of its walls emitted on the FAR half instead.
+Mirroring makes that a pure visibility choice: a wall at `[a, a+w]` and a far
+wall at `[1−a−w, 1−a]` constrain the stroke+reflection pair identically, so the
+maze the player must solve is partly invisible where they draw, and the only way
+to tell a real fork from a trap is to fold the far half across in their head.
+Every level is *proved* solvable by `LevelValidator` — a BFS gated by the real
 `CollisionSystem`, so the validator can never be more permissive than the game
-— and forced to wind (route ≥ 1.35× the direct distance) with real decoys.
-`levels.test.ts` re-proves all 300 on every run.
+— and every generated one is forced to wind (route ≥ 1.35× the direct distance)
+with real decoys. `levels.test.ts` re-proves all 300 on every run.
+
+The tutorial comes out of the same `MazeGen`, driven differently. `MazeGen`
+builds a maze in three stages: `carveMaze` (the tree and its closed edges),
+then a fold decision per edge, then `emitMaze` (edges to wall rects).
+`makeCandidate`, the driver for the ladder and the Daily Fold, rolls the folds
+at random. `scripts/genTutorialMazes.ts` *chooses* them. Each tutorial maze
+folds only the walls that teach its one lesson: the lie a single fold tells, a
+zigzag, a gate that is only a gap on one side, the sacrifice, then all four at
+once. Both the lesson and the maze are measured on the shortest line a hand can
+actually draw, at the game's hit radius and with room for a hand to spare, not
+on the maze grid, where a detour of two cells can cost the stroke nothing. A
+maze is kept only if that line goes *through* its corridors — turning, changing
+column, using the middle one, never up the undrawn left edge — with the drawn
+walls joined into a maze rather than a comb of bars, and only if its folds make
+the line at least 8–12% longer than the near half promises (11.8%, 15.6%,
+11.3%, 17.0% and 24.3% at the game's radius). The five are picked to rise strictly in
+`difficulty()` and hand over below level 6 (0.120 → 0.143, level 6 at 0.148),
+winding further each time. The bar tutorial they replaced stepped
+backwards twice, once into level 6. The first is too small to meet the
+ladder's winding floor, so the tutorial is exempt from it. Regenerate with
+`npx vite-node scripts/genTutorialMazes.ts`. The stages consume the random
+stream in exactly the order the old single function did, so every seed still
+carves the maze it always did. `levels.test.ts` fingerprints the 295 generated
+levels and 60 Daily Folds to keep it that way.
+
+The tutorial mazes took over the ids `l1`–`l5` from five hand-authored bar
+levels in September 2026, so save schema 3 forgets clears, best times and
+medals for those five ids and nothing else. `unlockedIndex` is a position, so
+nobody is sent back, and a saved figure keeps the walls it was drawn through.
 
 ### Ordering by difficulty, not by density
 
@@ -148,13 +228,16 @@ and `foldFraction` sends a difficulty-growing share of them to the far side, so
 the two halves land at the same heights by construction. The generator does not
 trust that — it *measures* every candidate with `interlock()` and throws away
 anything under `MIN_INTERLOCK`. Zero-overlap levels went from 98 to 4, and those
-four are the hand-authored tutorial: 1–4 teach one constraint at a time and 5 is
-where both arrive together. Mean interlock across the generated set is **58%**,
-with the quietest level at 8.8% and the loudest at 94%.
+four were the hand-authored bar tutorial, which taught one constraint at a time.
+The tutorial mazes that replaced it interlock too, gently (2–5%, from one or two
+chosen folds), so no level in the set has zero overlap now. Mean interlock
+across the generated set is **58%**, with the quietest level at 8.8% and the
+loudest at 94%.
 
-`interlock()` is the measure and `levels.test.ts` pins three things — every
-generated level interlocks, the tutorial's teaching order is preserved, and the
-*mean* stays high, so the bar cannot be cleared by a hair on every level.
+`interlock()` is the measure and `levels.test.ts` pins two things — every
+generated level interlocks, and the *mean* stays high, so the bar cannot be
+cleared by a hair on every level. The tutorial's order is pinned by the
+difficulty ramp instead, which it has to climb strictly into level 6.
 
 ### Solvable is not the same as playable
 
@@ -185,14 +268,19 @@ Every clear is saved (normalized, with its timing) and redrawn in the gallery by
 the same code that drew it live. Tapping one renders a **1080×1080 card** —
 paper grain, the figure, the wordmark — and hands it to the native share sheet.
 
-The app icon is generated by that same renderer from a hand-authored figure, so
-the mark on the home screen is literally made of the mechanic. `ShareCard` still
-carries the two options it needed — `nibScale` for a far bolder line than a card
-wants, and `flat` to drop the paper grain, which an icon must not have.
+Until 1.4 the app icon was generated by that same renderer from a hand-authored
+figure, so the mark on the home screen was literally made of the mechanic —
+`ShareCard` still carries the two options it needed, `nibScale` and `flat`. It read
+as a pale smudge in a search list, though, beside navy, black and purple tiles. The
+1.4 icon, "Mirror Path", is a drawn illustration of the rule instead: a line and its
+mirror through different walls on each side, ink on tangerine, with rust walls and a
+dark appearance. It is a picture of the idea, not a shipped level, and must never be
+captioned as gameplay. A second icon, "The Fold" in plum, ships in the binary as an
+alternate (`AppIcon-Fold`) only so the App Store can test one against the other.
 
-The script that drove it, `scratch/make-icon.mjs`, is **not committed** and
-never was. What is committed is its output, in `Assets.xcassets`. Regenerating
-the icon means writing that script again against `render/ShareCard.ts`.
+Neither the old script (`scratch/make-icon.mjs`) nor the new icons' drawing and
+recolouring scripts are committed. What is committed is their output, in
+`Assets.xcassets`.
 
 ## Sound
 
@@ -202,11 +290,13 @@ damped thud, not a buzzer — the game asks you to fail dozens of times a minute
 and an alarm would be unbearable. Nothing loops, and the context is created on
 the first real touch because iOS refuses to start audio any other way.
 
-Remove Ads ($2.99, non-consumable, family-shareable) is wired to StoreKit via
-`cordova-plugin-purchase` and was approved with 1.0. The whole store surface
-lives in `systems/Iap.ts`; nothing touches StoreKit until the player opens the
-purchase or restore flow, because a payment-queue observer at launch makes a
-signed-out device demand an Apple Account before the first tap.
+Remove Ads ($2.99, non-consumable, family-shareable) and the reveal packs are
+wired to StoreKit via `cordova-plugin-purchase` and approved; the one-time starter
+(`reveals25`, $0.99) goes to review with 1.4. The whole store surface lives in
+`systems/Iap.ts`; nothing touches StoreKit until a selling screen opens, because a
+payment-queue observer at launch makes a signed-out device demand an Apple Account
+before the first tap. Every purchase is credited once per transaction id and
+written to disk before StoreKit is told it was delivered.
 
 ## Controls
 
@@ -232,8 +322,8 @@ you are on, `M` goes back to the menu. Tapping after a win advances.
       core/MazeGen.ts         the maze as a pure function of a seed — ONE copy
       core/CalendarDay.ts     the one answer to "what day is it", in LOCAL time
       core/FoldSense.ts       the 0..100 skill rating, from real play signals
-      data/tutorialLevels.ts  the five hand-authored levels, apart from the table
-      data/levels.ts          5 hand-authored + 295 generated = 300
+      data/tutorialLevels.ts  GENERATED — run scripts/genTutorialMazes.ts
+      data/levels.ts          5 tutorial + 295 generated = 300
       data/generatedLevels.ts GENERATED — run scripts/genLevels.ts
       core/LevelValidator.ts  BFS proof a level can be finished, plus the gates
       core/Ribbon.ts          speed-driven variable-width ink
@@ -246,6 +336,21 @@ you are on, `M` goes back to the menu. Tapping after a win advances.
       render/ScrollView.ts    tap-vs-drag, momentum, and off-screen culling
       systems/Daily.ts        today's fold — seed = date, so the world agrees
       systems/WebDaily.ts     the install-free browser build, as one build flag
+      core/Streak.ts          streaks through bookmarks, milestones, the repair window
+      core/Missions.ts        the day's three missions, dealt from the date
+      core/Rewards.ts         chapters of twenty and their marks
+      core/Rescue.ts          the three-death / six-death rescue ladder, and its place
+      core/RouteProgress.ts   how far along the maze a failed line got
+      systems/Progress.ts     the save, and every grant through one announced path
+      systems/Iap.ts          StoreKit; systems/iapMock.ts, the browser's fake store
+      systems/NudgePlan.ts    which reminders to leave on the phone, and what they say
+      systems/Nudges.ts       writes that plan, never prompting; routes a tap
+      systems/Rate.ts         the review prompt: once a version, at a peak
+      render/StoreSheet.ts    the one store, from every screen that sells
+      render/ResultCard.ts    the win card and its layout
+      render/DailyCard.ts     the menu's Daily card, its six faces
+      render/MenuLayout.ts    the menu as a pure layout, at every canvas scale
+      render/SafeArea.ts      safe-area insets, banner lift, desk margins
 
 ## Two things that look like polish and are not
 
@@ -301,7 +406,9 @@ the other to survive.
 Four placements:
 
 1. **Leaving a win.** The player has seen their figure and tapped to move on.
-   The ad fires *after* the figure, never over it. Every 3rd win.
+   The ad fires *after* the figure, never over it. Every 3rd win — and never
+   after a card that already asked for something (a reminder, the chapter
+   doubler): one interruption per moment.
 2. **A retry, gated hard.** Every 8th failed attempt *and* the session ladder's
    floor since
    the last ad — **both**, never either. This one needs the explanation below.
@@ -311,26 +418,40 @@ Four placements:
 4. **A voluntary ask.** Rewarded video for a *reveal*, which paints the mirror's
    forbidden bands onto your half for six seconds — the exact thing the game
    withholds: not the answer, but where your own reflection is about to kill
-   you. Rewards are banked, not auto-spent, with a free daily top-up. The offer
-   is contextual: after three deaths on one level the game points at the fold,
-   and only after six does it offer the way past, so it visibly tries to teach
-   before it offers to excuse.
+   you. Rewards are banked, not auto-spent. The offer is contextual: after
+   three deaths on one level the game points at the fold, and only after six
+   does it offer the way past — later still, at nine, for a player who could
+   look and has not — so it visibly tries to teach before it offers to excuse.
+   Ad-paid reveals stop at five a day; the skip and the streak repair are
+   rescues, not currency, and are drawn free wherever no ad can play.
 
-Two purchases, both in `systems/Iap.ts`: **Remove Ads**
-One ladder, in one place — the sheet you get when the stash is empty:
+Reveals also arrive without an ad or a purchase — the daily top-up, three
+missions a day, chapter marks, streak milestones — sized so an engaged player
+gains four or five a day and never as many as the smallest pack holds.
 
-    Watch an ad         +1 reveal    free
+One ladder, in one place — the store sheet, the same one whether it opens from
+the menu or from an empty Reveal pill:
+
+    Watch an ad         +1 reveal    free · 5 a day
+    Starter, 25         $0.99        once, after the fifth win
     10 reveals          $0.99        9.90¢ each
     20 reveals          $1.49        7.45¢ each   (−25%)
     30 reveals          $1.99        6.63¢ each   (−33%)
-    Unlimited reveals   $2.99        and no banner, no pop-ups
+    Remove ads          $2.99        once · no ads, unlimited reveals & skips
 
 The free rung comes first and is the only primary button: reveals have to stay
 earnable or watching the next ad stops being a fair deal. Everything below it
 gets better value than the rung above, and the last rung is not a pack at all —
-fifty cents past the 25-pack buys reveals that never run out plus no ads, which
+a dollar past the 30-pack buys reveals that never run out plus no ads, which
 makes the permanent unlock the obvious end of the row rather than something the
-player has to go and find on another screen.
+player has to go and find on another screen. The starter sits outside the ladder
+on purpose: sold once, and shown only where it is honestly cheaper per reveal
+than every rung — at $0.99 for twenty-five it is, in every storefront.
+
+Where Apple's price tiers break the ladder — Serbia's 20- and 30-packs are both
+€1.99, the UK's 10 and 20 both £0.99 — the rung that has become a trap is simply
+not drawn (`sellableLadder`); the product ids are permanent, so the fix is at
+runtime.
 
 Two rules hold the ladder together, and both are pinned by tests.
 
@@ -374,7 +495,9 @@ Encoded with WebCodecs (`VideoEncoder` → VideoToolbox → H.264 in MP4, muxed 
 `mp4-muxer`). Safari shipped the video half of WebCodecs in 16.4, which is all a
 silent clip needs. Where it is missing the button does not appear at all rather
 than failing after the tap. Measured: ~11s of clip, 3.4 MB, under two seconds to
-encode.
+encode. Every step of the render is bounded — iOS 26's AAC encoder can fail
+without ever answering, which now costs the clip its sound and nothing else —
+and the progress card offers Cancel after two seconds, so it always comes down.
 
 **Share this fold** is the still card, unchanged — a figure you made, pasted
 into a chat as an image rather than something to press play on.
@@ -389,10 +512,11 @@ review.
 
 A failed attempt in this game lasts three to eight seconds. An attempt counter
 on its own — "every 5th try" — would put an ad on screen roughly every 25
-seconds on a level someone is stuck on. AdMob's policy explicitly forbids
-triggering an interstitial "every time a user clicks within the app" and warns
-that ad serving gets disabled over it, so that configuration does not trade
-retention for revenue; it trades an account for nothing.
+seconds on a level someone is stuck on. AdMob's policy explicitly forbade
+triggering an interstitial "every time a user clicks within the app" and warned
+that ad serving gets disabled over it. The rule was kept unchanged when the game
+moved to Unity LevelPlay: that configuration does not trade retention for
+revenue; it trades an account for nothing.
 
 The count is therefore only a *permission* and the clock is the *brake*. This
 matches the industry rule of two axes at once — minimum seconds AND minimum
@@ -400,15 +524,21 @@ actions since the last ad. `monetization.test.ts` pins the arithmetic: it
 asserts that even with instant failures the count cannot outrun the time floor,
 so nobody can make the game more aggressive by editing one number in isolation.
 
-Remove Ads bundles unlimited reveals, so the purchase is worth roughly double at
-no marginal cost. Nothing in `CollisionSystem` reads `InkTheme`, so no skin and
-no purchase can change what kills you.
+Remove Ads bundles unlimited reveals and free skips, so the purchase is worth far
+more than any pack at no marginal cost — and someone who paid to remove ads is never
+asked to watch one. Nothing in `CollisionSystem` reads `InkTheme`, so no skin and no
+purchase can change what kills you.
 
-Going live is one switch — `useTestAds: false` — plus the matching native
-app id in `Info.plist`. A test fails if those two disagree, and a second one,
-which branches on nothing, fails if Google's test publisher id appears in the
-plist at all: agreement alone was a green suite for *both* on TEST, and that is
-how a build went out with test ads in a signed ipa. See `SUBMIT.md`.
+There is no "test ads" switch any more. Unity LevelPlay has no test inventory —
+its test flag only unlocks the Test Suite, and every build with ads on serves the
+real waterfall — so the builds are told apart by markers baked into the bundle
+instead: the App Store gets `ADMODE:live` + `ADS:on` (`npm run ios:appstore`),
+TestFlight gets `ADS:off`, where the ad layer never starts
+(`npm run ios:testflight`), and ads are looked at on the mock build, which draws
+fake ones and calls no network (`npm run dev:mock`, or on TestFlight with
+`fastlane beta_mock` when the owner asks). Every App Store release is
+two uploads, the live one and an ads-off one straight after it:
+`npm run release:appstore`. The rules are in `CLAUDE.md`.
 
 ## One open question for the author
 

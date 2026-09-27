@@ -81,7 +81,7 @@ Put this in `Info.plist` so TestFlight never blocks a build on the encryption qu
 
 ## App Privacy (the nutrition label)
 
-**Not** managed by fastlane — set it in the ASC UI, and it applies at the **app level**, independent of any version (so it can be fixed any time, including during review). With AdMob you must declare:
+**Not** managed by fastlane — set it in the ASC UI, and it applies at the **app level**, independent of any version (so it can be fixed any time, including during review). With an ad SDK (AdMob then, Unity LevelPlay now — the answers are the same) you must declare:
 - **Identifiers → Device ID (IDFA)** — Third-Party Advertising, *Not Linked*, **Used for Tracking**
 - **Usage Data → Product Interaction** — Third-Party Advertising + Analytics, *Not Linked*, Used to Track
 - optionally Diagnostics (crash/performance)

@@ -165,4 +165,16 @@ describe('laying a saved run out on a card', () => {
   it('reports nothing to draw rather than throwing on an empty stroke', () => {
     expect(layoutFigureCard(figure({ points: [], times: [] }), BOX)).toBeNull();
   });
+
+  /* The board's sheet frames the playfield in every painter (tech G11). */
+  it('hands the painters the playfield it framed, and which markers are reflections', () => {
+    const layout = layoutFigureCard(figure(), BOX)!;
+    const pf = new Playfield(BASE_WIDTH, BASE_HEIGHT, METRICS.inset);
+    expect(layout.frame).not.toBeNull();
+    expect(layout.frame!.w).toBeCloseTo(pf.w * layout.scale, 9);
+    expect(layout.frame!.h).toBeCloseTo(pf.h * layout.scale, 9);
+    expect(layout.axis!.x).toBeCloseTo(layout.frame!.x + layout.frame!.w / 2, 9);
+    expect(layout.markers.map((m) => m.mirror)).toEqual([true, true, false, false]);
+    expect(layoutFigureCard(figure({ walls: undefined }), BOX)!.frame).toBeNull();
+  });
 });

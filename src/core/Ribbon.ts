@@ -12,7 +12,7 @@
  * what kills you. A slow, fat stroke is exactly as safe as a fast, thin one.
  */
 
-import { clamp, dist, type Vec2 } from './Geometry';
+import { clamp, dist, distPointToSeg, type Vec2 } from './Geometry';
 
 export interface RibbonOptions {
   /** Nib width at normal drawing speed, in pixels. */
@@ -29,10 +29,18 @@ export interface RibbonOptions {
   readonly smoothPasses: number;
 }
 
+/**
+ * The house nib. The slow end swells to 1.5 and the fast end holds 0.6
+ * (SPEC §3.3, from 1.35 / 0.45): a line that lingered reads as pooled ink or
+ * gathered light, and one that hurried no longer thins to a scratch — at
+ * 0.45 a quick stroke's glow had almost nothing to glow round. The speed that
+ * counts as hurrying, the taper and the smoothing are unchanged, and none of
+ * it reaches collision.
+ */
 export const DEFAULT_RIBBON: RibbonOptions = {
   baseWidth: 10,
-  maxScale: 1.35,
-  minScale: 0.45,
+  maxScale: 1.5,
+  minScale: 0.6,
   fastSpeed: 2.2,
   taperPoints: 7,
   smoothPasses: 3,
@@ -120,15 +128,34 @@ export function buildRibbon(
   times: readonly number[],
   opts: RibbonOptions = DEFAULT_RIBBON
 ): Ribbon {
-  const widths = widthProfile(points, times, opts);
+  return ribbonSlice(points, widthProfile(points, times, opts));
+}
+
+/**
+ * The quads and discs of points [from, to), for a path whose half-widths are
+ * already known.
+ *
+ * Every segment belongs to the slice holding its END point, so two slices that
+ * meet — [0, b) and [b, n) — paint every quad and every disc of the whole
+ * ribbon exactly once between them. That is what lets the live stroke paint its
+ * settled start once and redraw only the end that is still moving.
+ */
+export function ribbonSlice(
+  points: readonly Vec2[],
+  widths: readonly number[],
+  from = 0,
+  to = points.length
+): Ribbon {
+  const start = Math.max(0, from);
+  const end = Math.min(points.length, to);
   const quads: RibbonQuad[] = [];
   const discs: { p: Vec2; r: number }[] = [];
 
-  for (let i = 0; i < points.length; i++) {
+  for (let i = start; i < end; i++) {
     discs.push({ p: points[i], r: Math.max(0, widths[i]) });
   }
 
-  for (let i = 0; i < points.length - 1; i++) {
+  for (let i = Math.max(0, start - 1); i < end - 1; i++) {
     const p = points[i];
     const q = points[i + 1];
     const dx = q.x - p.x;
@@ -151,6 +178,65 @@ export function buildRibbon(
   }
 
   return { quads, discs };
+}
+
+/**
+ * How many leading points of a path that is still GROWING already have their
+ * final ribbon — the prefix no later sample can change.
+ *
+ * A new sample reaches back only so far. The render smoothing moves the last
+ * `movingTail` points of the drawn path (see `renderTailReach`), the width
+ * smoothing spreads that change `smoothPasses` further, and the end taper thins
+ * the last `taperPoints`, which un-thin once the pen moves on. The START taper
+ * is settled only once the path is long enough that it stops stretching with
+ * every sample. Everything before that reach is final, so the renderer can
+ * paint it once instead of on every frame. One extra point of margin.
+ */
+export function settledPoints(n: number, opts: RibbonOptions, movingTail: number): number {
+  if (n < 2 * opts.taperPoints + 2) return 0;
+  const reach = Math.max(opts.taperPoints, movingTail + opts.smoothPasses) + 1;
+  return Math.max(0, n - reach);
+}
+
+/**
+ * The samples a painter at this scale can tell apart: indices into `points`,
+ * first and last always kept.
+ *
+ * The drawn path carries a sample every couple of pixels of the PLAYFIELD, and a
+ * gallery card shrinks that to a fraction of a pixel — tens of thousands of
+ * shapes per card that land on the same few pixels. A sample is dropped only
+ * while the chord that replaces it stays shorter than `maxSpan` AND passes
+ * within `tolerance` of every sample it skips, so the thinned line never wanders
+ * further than that from the smoothed one: a card that showed the line clear of
+ * a wall still shows it clear. Widths are the caller's to carry across by index —
+ * computed on the full path first, because the taper and the swell are counted
+ * in samples and thinning first would stretch them.
+ */
+export function thinPath(
+  points: readonly Vec2[],
+  maxSpan: number,
+  tolerance: number
+): number[] {
+  const n = points.length;
+  if (n <= 2) return points.map((_, i) => i);
+
+  const keep = [0];
+  let anchor = 0;
+  for (let i = 1; i < n - 1; i++) {
+    // Could the chord from the anchor reach one sample further and still
+    // stand in for everything it would skip?
+    const next = i + 1;
+    let holds = dist(points[anchor], points[next]) <= maxSpan;
+    for (let k = anchor + 1; holds && k < next; k++) {
+      holds = distPointToSeg(points[k], points[anchor], points[next]) <= tolerance;
+    }
+    if (!holds) {
+      keep.push(i);
+      anchor = i;
+    }
+  }
+  keep.push(n - 1);
+  return keep;
 }
 
 /**

@@ -8,8 +8,8 @@ seeds the deterministic generator; `systems/Daily.ts`), chapters of 20 in the
 level select, par + medals (validator route arc as `parPx`, gold at ≤1.25×),
 ghost of the previous attempt, the contextual reveal offer at 3 deaths (skip
 moves to 6), and the 20-reveals consumable (`com.noqyris.foldwing.reveals20`,
-$1.99 base, live in ASC, offered in the out-of-reveals sheet next to the
-rewarded option). Build 18 added **Fold Sense** — a 0..100 skill rating
+then $1.99 base — $1.49 since the ladder became 10/20/30 — offered in the
+out-of-reveals sheet next to the rewarded option). Build 18 added **Fold Sense** — a 0..100 skill rating
 (line-vs-par, tries, reveals, mirror-death share, fold exposure; EMA
 profile score) shown on wins and the menu, plus the Wordle-style
 spoiler-safe TEXT share for the Daily. Guardrail: it is a game rating, not
@@ -22,7 +22,8 @@ streak widget).
 what is already on it true. The submission state is real again: live AdMob
 units in the tree, and a test that now fails on Google's test publisher id
 whatever `useTestAds` says, because "both knobs on TEST" agreed with each other
-and shipped inside build 19. The Daily's seams were closed — one definition of
+and shipped inside build 19. (AdMob era — the game moved to Unity LevelPlay in
+September 2026 and none of that mechanism exists any more; see `CLAUDE.md`.) The Daily's seams were closed — one definition of
 what day it is (`core/CalendarDay.ts`, LOCAL, which the fold and the free
 top-up had been disagreeing about for up to eleven hours a day), the decoy gate
 applied at runtime so a daily clears the same four gates every shipped level
@@ -33,6 +34,34 @@ hints on level 1 and on the first daily, an actual ending for the campaign —
 level 300 returns to the menu, which says so rather than pretending nothing
 happened — and the web daily (`systems/WebDaily.ts`), ahead of its phase-2
 slot.
+
+**1.3 (2026-09-17):** the ads moved to Unity LevelPlay after Google closed the
+AdMob account, and the ladder shipped as 10 / 20 / 30 reveals at $0.99 / $1.49 /
+$1.99 under Remove Ads at $2.99. Game Center shipped too — a Daily leaderboard and
+eight achievements — which ticks it off the open list above.
+
+**1.4 (2026-09-23, on TestFlight as the mock build, not submitted):** the
+retention half of this list, and the store the IAP section asked for.
+- **Daily missions** — three a day, slot one always the Daily, +1 reveal each —
+  and **chapter marks**, +1 at 10 and +2 at 20 cleared per chapter of twenty:
+  the "intermediate finish lines" of gameplay item 2, with a reward on them.
+- **Streak bookmarks** and a rewarded **streak repair**: the streak protects
+  instead of punishing (Duolingo's freeze, with the paper-themed name). The
+  "tiny calendar of past days" is still open.
+- **A result card** after every win, the reward flights, the gift made visible.
+- **Store v2**: one sheet everywhere, a free rung capped at five ad-paid reveals a
+  day (without a cap an ad beats every pack forever), a one-time **starter pack**
+  (`reveals25` at $0.99 after five wins, the entry point item 3 below never had),
+  honest rungs per storefront, and Remove Ads with free skips. Still no "Foldwing
+  Plus" SKU: Remove Ads already is most of it.
+- **Local reminders** at the player's own time, with a streak saver and a win-back
+  tail — the retention loop the Daily needed, without a server.
+- **A review prompt at a peak**, once per version — with zero ratings, the biggest
+  ranking lever the listing has — and an ASO pass: new name, subtitle, keywords,
+  three new localizations, new icon, nine screenshots.
+
+Still open: the weekly Impossible fold, Zen mode, the streak widget, a calendar of
+past Dailies, cosmetic inks, and remote push for live-ops.
 
 ## Monetization: what fits THIS game
 
@@ -54,10 +83,12 @@ replace it:
    button. Contextual rewarded placements convert far better than passive
    ones.
 2. **Keep interstitials rare and time-floored** (current: every 3rd win /
-   5th attempt AND 120s floor). Logic-puzzle players churn on interruption;
+   8th failed attempt AND the session ladder — none in the first 3 minutes, then
+   at most one every 3 minutes, one every 2 after 10 minutes). Logic-puzzle players churn on interruption;
    the revenue center of gravity should shift toward rewarded + IAP as the
    game matures. Do not add more interstitial pressure.
-3. **IAP ladder** (today only Remove Ads):
+3. **IAP ladder** (on 2026-08-07 only Remove Ads; since 1.3 the 10/20/30 packs
+   under it, and since 1.4 a one-time starter):
    - `Remove Ads` — keep, price anchor.
    - `Reveal bundle` (consumable, e.g. 20 reveals) — the natural "hint pack";
      hint bundles are the second pillar of puzzle IAP (benchmark example:
@@ -69,8 +100,8 @@ replace it:
    game already reserves its strip. No change.
 
 **Priority order:** contextual rewarded reveal offer → reveal bundle IAP →
-Plus SKU. All three sit behind the AdMob review clearing and real traffic —
-measure, then tune.
+Plus SKU. All three sit behind real traffic on the LevelPlay build (the AdMob
+review they once waited on went with AdMob) — measure, then tune.
 
 ## Gameplay: what to add, in order of leverage
 

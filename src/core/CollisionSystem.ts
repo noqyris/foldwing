@@ -21,6 +21,16 @@ import {
   type Vec2,
 } from './Geometry';
 
+/** The first contact along a segment — see `CollisionSystem.firstHit`. */
+export interface Hit {
+  /** Where along the segment, 0..1, in the player's own parameterisation. */
+  t: number;
+  /** The reflection struck, not the stroke the player is drawing. */
+  mirror: boolean;
+  /** Index of the struck wall in the rects the system was built with. */
+  wall: number;
+}
+
 export class CollisionSystem {
   /**
    * @param walls     wall rects in playfield pixels, both halves
@@ -61,22 +71,28 @@ export class CollisionSystem {
    * its reflection. The distinction is the game's own skill axis — a mirror
    * death means the half they were not looking at killed them — and it is
    * what Fold Sense measures.
+   *
+   * `wall` is the index, into the rects this system was built with, of the
+   * wall that was struck — for a mirror death, the real wall the REFLECTION
+   * ran into, on the far half. It is only reported: the death is decided by
+   * `t` exactly as before, and on a tie the wall listed first still wins.
    */
-  firstHit(a: Vec2, b: Vec2): { t: number; mirror: boolean } | null {
+  firstHit(a: Vec2, b: Vec2): Hit | null {
     const ma = mirrorPoint(a, this.axisX);
     const mb = mirrorPoint(b, this.axisX);
 
-    let earliest: { t: number; mirror: boolean } | null = null;
+    let earliest: Hit | null = null;
 
-    for (const wall of this.walls) {
-      const own = segRectEntryT(a, b, wall, this.hitRadius);
+    for (let wall = 0; wall < this.walls.length; wall++) {
+      const rect = this.walls[wall];
+      const own = segRectEntryT(a, b, rect, this.hitRadius);
       if (own !== null && (earliest === null || own < earliest.t)) {
-        earliest = { t: own, mirror: false };
+        earliest = { t: own, mirror: false, wall };
       }
 
-      const reflected = segRectEntryT(ma, mb, wall, this.hitRadius);
+      const reflected = segRectEntryT(ma, mb, rect, this.hitRadius);
       if (reflected !== null && (earliest === null || reflected < earliest.t)) {
-        earliest = { t: reflected, mirror: true };
+        earliest = { t: reflected, mirror: true, wall };
       }
     }
 

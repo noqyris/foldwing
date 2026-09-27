@@ -1,12 +1,19 @@
-# AdMob setup (Capacitor)
+# AdMob setup (Capacitor) — HISTORY
+
+> **Not used by Foldwing any more.** Google closed the owner's AdMob publisher
+> account on 2026-08-18; the game serves Unity LevelPlay since September 2026, and
+> `scripts/check-no-google.mjs` refuses any AdMob plugin, key or id in this repo.
+> Kept as a record of how the AdMob integration worked. Do not follow it to wire ads
+> here, and in particular do not carry its "test ads are safe to click" idea over:
+> LevelPlay has no test inventory.
 
 Plugin: `@capacitor-community/admob`.
 
 ## 1. Console: create ONE AdMob app per platform
 
 iOS and Android are **separate AdMob apps** with separate IDs. You get:
-- **App ID** — `ca-app-pub-XXXXXXXX~NNNNNNNN` (tilde `~`) → goes in the **native** config.
-- **Ad unit IDs** — `ca-app-pub-XXXXXXXX/NNNNNNNN` (slash `/`) → go in **code**. Create one per format: banner, interstitial, rewarded.
+- **App ID** — `<publisher>~<app>` (tilde `~`) → goes in the **native** config.
+- **Ad unit IDs** — `<publisher>/<unit>` (slash `/`) → go in **code**. Create one per format: banner, interstitial, rewarded.
 
 Mixing up `~` (app) and `/` (unit), or using the iOS units on Android, is the classic silent-no-fill bug.
 
@@ -15,7 +22,7 @@ Mixing up `~` (app) and `/` (unit), or using the iOS units on Android, is the cl
 **iOS** — `ios/App/App/Info.plist`:
 ```xml
 <key>GADApplicationIdentifier</key>
-<string>ca-app-pub-XXXXXXXX~NNNNNNNN</string>
+<string><!-- the app id, publisher~app --></string>
 <key>NSUserTrackingUsageDescription</key>
 <string>Used to show you more relevant ads.</string>
 ```
@@ -25,18 +32,18 @@ Also keep the `SKAdNetworkItems` array the SDK ships with (attribution).
 ```xml
 <meta-data
     android:name="com.google.android.gms.ads.APPLICATION_ID"
-    android:value="ca-app-pub-XXXXXXXX~NNNNNNNN" />
+    android:value="<the app id, publisher~app>" />
 ```
 A wrong/missing value here **crashes the app on launch** on Android.
 
 ## 3. Code: a test/live switch
 
-Keep Google's official test units alongside your live ones and flip one flag. Test ads are safe to click; live ads are not.
+Keep Google's official sample units (published in the AdMob docs) alongside your live ones and flip one flag. Under AdMob, test ads were safe to click; live ads were not. (No such thing exists on LevelPlay.)
 
 ```ts
 const TESTING = false                    // true = Google test ads
-const TEST_UNITS_IOS     = { banner: 'ca-app-pub-3940256099942544/2934735716', … }
-const TEST_UNITS_ANDROID = { banner: 'ca-app-pub-3940256099942544/6300978111', … }
+const TEST_UNITS_IOS     = { banner: '<Google sample banner unit, iOS>', … }
+const TEST_UNITS_ANDROID = { banner: '<Google sample banner unit, Android>', … }
 const LIVE_UNITS_IOS     = { /* yours */ }
 const LIVE_UNITS_ANDROID = { /* yours */ }
 

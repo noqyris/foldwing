@@ -2,7 +2,7 @@
  * Level generator — MAZES.
  *
  * Emits src/data/generatedLevels.ts: 295 labyrinth levels appended after the
- * five hand-authored tutorial levels, ordered easy to hard.
+ * five tutorial mazes (scripts/genTutorialMazes.ts), ordered easy to hard.
  *
  * The maze itself lives in src/core/MazeGen.ts — ONE definition, shared with
  * the runtime Daily Fold. This script is only the curator: it generates a

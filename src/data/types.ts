@@ -33,8 +33,9 @@ export interface Level {
   readonly parMs?: number;
   /**
    * Arc length of the validator's proved route, in base pixels — the par a
-   * winning line is measured against. Generated levels carry it precomputed;
-   * for hand-authored ones it is computed on first win.
+   * winning line is measured against. Every shipped level carries it
+   * precomputed by its generator, and the Daily Fold computes its own; a level
+   * without one has it computed on the win frame.
    */
   readonly parPx?: number;
 }

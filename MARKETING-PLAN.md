@@ -5,6 +5,21 @@ paid UA, community/viral loops, Apple platform, launch case studies). Reels
 production specifics live in [MARKETING.md](MARKETING.md); monetization and
 feature roadmap in [GROWTH.md](GROWTH.md). Sources at the bottom.
 
+**Status, 2026-09-23 (1.4 in preparation, not submitted).** From this plan:
+- *Shipped:* the spoiler-safe text share and the web-playable Daily (August), Game
+  Center's Daily leaderboard and achievements (1.3), and in 1.4 a rewarded "restore
+  my streak" (the streak repair, beside streak bookmarks) and the rating prompt at
+  a peak — once per version, from the second day played, on a late medal or a Daily
+  that takes the streak to three.
+- *Superseded:* the Phase 0 ASO draft below. The 1.4 listing, set in App Store
+  Connect on 2026-09-23 after a keyword study, is `Foldwing: One Line Mirror Maze` /
+  `Drawing puzzle, hidden walls`, with en-GB, es-MX and hr added and a new icon; see
+  [SUBMIT.md](SUBMIT.md). Ratings are still zero everywhere, which is why the prompt
+  shipped before anything else here.
+- *Not done, as far as this repo records:* the streak widget, Game Center
+  Challenges, milestone share cards, the referral loop, the Featuring nomination,
+  and everything in Phase 3.
+
 ## The strategy in one paragraph
 
 Foldwing is a **daily-ritual game with a visually arresting mechanic** — the

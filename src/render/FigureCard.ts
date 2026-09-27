@@ -31,6 +31,25 @@ export interface CardMarker {
   readonly kind: 'start' | 'goal';
   /** Reflections are drawn faint: they are not second targets. */
   readonly alpha: number;
+  /** The reflected pair, drawn in the theme's `veil` rather than the accent. */
+  readonly mirror: boolean;
+}
+
+/**
+ * The board's sheet around the playfield (SPEC §3.1), in base units: 11
+ * wider on each side, 22 taller at the top and the bottom, its corners 28 pt.
+ *
+ * Here, beside the layout, because three painters frame the maze with it —
+ * the play board's bake, the share card and the replay video — and a sheet
+ * one pixel off between them is the drift this module exists to prevent.
+ */
+export const BOARD_SHEET = { padX: 11, padY: 22, radius: 52 } as const;
+
+/** The sheet around a playfield `frame`, at `scale` card pixels per base pixel. */
+export function sheetAround(frame: Rect, scale = 1): Rect {
+  const px = BOARD_SHEET.padX * scale;
+  const py = BOARD_SHEET.padY * scale;
+  return { x: frame.x - px, y: frame.y - py, w: frame.w + 2 * px, h: frame.h + 2 * py };
 }
 
 export interface CardLayout {
@@ -40,6 +59,8 @@ export interface CardLayout {
   readonly walls: readonly Rect[];
   readonly wallRadius: number;
   readonly markers: readonly CardMarker[];
+  /** The playfield in card pixels — what the board's sheet frames. Null without a maze. */
+  readonly frame: Rect | null;
   /** The fold. Null when there is no maze to fold against. */
   readonly axis: { readonly x: number; readonly top: number; readonly bottom: number } | null;
   readonly axisDash: number;
@@ -110,10 +131,10 @@ export function layoutFigureCard(
     const goal = pf.toScreen(figure.goal);
     // Reflections first, so the real markers paint over them where they meet.
     markers.push(
-      { p: place(pf.mirror(start)), kind: 'start', alpha: theme().reflectionAlpha },
-      { p: place(pf.mirror(goal)), kind: 'goal', alpha: theme().reflectionAlpha },
-      { p: place(start), kind: 'start', alpha: 1 },
-      { p: place(goal), kind: 'goal', alpha: 1 }
+      { p: place(pf.mirror(start)), kind: 'start', alpha: theme().reflectionAlpha, mirror: true },
+      { p: place(pf.mirror(goal)), kind: 'goal', alpha: theme().reflectionAlpha, mirror: true },
+      { p: place(start), kind: 'start', alpha: 1, mirror: false },
+      { p: place(goal), kind: 'goal', alpha: 1, mirror: false }
     );
   }
 
@@ -122,6 +143,7 @@ export function layoutFigureCard(
     walls: hasMaze ? figure.walls!.map((w) => placeRect(pf.toScreenRect(w))) : [],
     wallRadius: METRICS.wallCornerRadius * scale,
     markers,
+    frame: hasMaze ? placeRect(frame) : null,
     axis: hasMaze
       ? {
           x: pf.axisX * scale + offX,
@@ -185,9 +207,19 @@ export function strokeUpTo(stroke: DrawnStroke, ms: number): DrawnStroke {
   };
 }
 
-/** Marker radii at a given card scale, so both painters size them alike. */
+/**
+ * The start dot as DRAWN: 8.5 pt on the 402-wide mock (SPEC §3.1), in base
+ * units. Only the picture: where a press may begin is still
+ * `METRICS.startRadius × startGrabFactor`, which no cosmetic touches.
+ */
+export const START_DOT_R = Math.round(8.5 * (BASE_WIDTH / 402));
+
+/**
+ * Marker radii at a given card scale, so every painter sizes them alike. The
+ * goal ring IS the win threshold, so it is drawn at exactly `goalRadius`.
+ */
 export function markerRadius(kind: 'start' | 'goal', scale: number): number {
-  return (kind === 'start' ? METRICS.startRadius : METRICS.goalRadius) * scale;
+  return (kind === 'start' ? START_DOT_R : METRICS.goalRadius) * scale;
 }
 
 export const goalRingWidth = (scale: number): number =>

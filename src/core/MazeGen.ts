@@ -10,8 +10,17 @@
  * This lives in src (not in the generator script) because the DAILY FOLD
  * needs it at runtime: the same seed must produce the same maze on every
  * phone, so seed = date gives the whole world the same puzzle with zero
- * server. The build-time generator imports this same module — there is
+ * server. The build-time generators import this same module — there is
  * exactly one definition of what a foldwing maze is.
+ *
+ * The maze is built in three stages that anyone may drive: `carveMaze` (the
+ * tree, its entry and exit, and every closed edge as an unfolded segment),
+ * a fold decision per segment, and `emitMaze` (segments -> wall rects).
+ * `makeCandidate` is the ladder's and the Daily's driver — random folds at a
+ * t-dependent fraction. The tutorial generator drives the same stages with
+ * folds CHOSEN, because a first maze has to put its one folded wall where it
+ * teaches something. The stages consume the rng in exactly the order the
+ * single function did, so every seed still produces the identical maze.
  *
  * Everything here is deterministic and side-effect free. No Phaser, no DOM,
  * no clock.
@@ -34,7 +43,7 @@ const round = (n: number): number => Math.round(n * 10000) / 10000;
 export const MAZE_TOP = 0.14;
 export const MAZE_BOTTOM = 0.78;
 
-interface LineSeg {
+export interface MazeSeg {
   dir: 'h' | 'v';
   /** Grid-line coordinate: y for 'h', x for 'v' (normalized). */
   line: number;
@@ -43,6 +52,11 @@ interface LineSeg {
   b: number;
   /** Emitted on the far half (visible only as a reflection)? */
   folded: boolean;
+  /**
+   * The two cells this closed edge separates, as indices `row * cols + c`.
+   * `-1` is the start runway below the maze, `-2` the goal band above it.
+   */
+  cells: readonly [number, number];
 }
 
 export interface MazeParams {
@@ -70,15 +84,46 @@ export interface MazeCandidate {
   decoy: number;
 }
 
+/** A carved spanning tree and every wall it leaves standing, none folded yet. */
+export interface CarvedMaze {
+  cols: number;
+  rows: number;
+  /** Cell index -> passage open to the right / downward. */
+  openRight: ReadonlySet<number>;
+  openDown: ReadonlySet<number>;
+  /** Bottom-row column the start sits under; top-row column the goal sits over. */
+  entry: number;
+  exit: number;
+  /** Fraction of maze cells OFF the one true route — dead-end mass. */
+  decoy: number;
+  /** Closed edges in emission order. Fold decisions are the caller's. */
+  segs: MazeSeg[];
+}
+
 export function makeCandidate(seed: number, t: number): MazeCandidate {
   const r = rng(seed);
-  const { cols: C, rows: R, foldFraction } = paramsFor(t, r);
-  const px = 0.5 / C;
-  const py = (MAZE_BOTTOM - MAZE_TOP) / R;
+  const { cols, rows, foldFraction } = paramsFor(t, r);
+  const maze = carveMaze(r, cols, rows);
+  for (const s of maze.segs) s.folded = r() < foldFraction;
+
+  // The asymmetry invariant needs at least one wall on the far half.
+  if (!maze.segs.some((s) => s.folded)) maze.segs[Math.floor(r() * maze.segs.length)].folded = true;
+
   // Wall thickness per axis; the 0.021 floor keeps walls readable at
   // level-card scale (the quality suite rejects under 0.02 either way).
-  const tx = round(0.027 - t * 0.005);
-  const ty = 0.021;
+  return {
+    level: emitMaze(`g${seed}`, maze, round(0.027 - t * 0.005), 0.021),
+    decoy: maze.decoy,
+  };
+}
+
+/**
+ * The tree, its entry and exit, and its closed edges as unfolded segments.
+ * Consumes `r` for the carve and the entry, nothing else.
+ */
+export function carveMaze(r: () => number, C: number, R: number): CarvedMaze {
+  const px = 0.5 / C;
+  const py = (MAZE_BOTTOM - MAZE_TOP) / R;
 
   /* Recursive backtracker: a spanning tree with long, deep corridors —
    * exactly one path between any two cells. */
@@ -143,17 +188,19 @@ export function makeCandidate(seed: number, t: number): MazeCandidate {
   const decoy = 1 - (dist[idx(exit, 0)] + 1) / (C * R);
 
   /* Closed edges -> unit wall segments on grid lines. */
-  const segs: LineSeg[] = [];
-  const fold = (): boolean => r() < foldFraction;
+  const segs: MazeSeg[] = [];
+  const seg = (s: Omit<MazeSeg, 'folded'>): void => {
+    segs.push({ ...s, folded: false });
+  };
   for (let row = 0; row < R; row++) {
     for (let c = 0; c < C - 1; c++) {
       if (!openRight.has(idx(c, row))) {
-        segs.push({
+        seg({
           dir: 'v',
           line: round(px * (c + 1)),
           a: round(MAZE_TOP + py * row),
           b: round(MAZE_TOP + py * (row + 1)),
-          folded: fold(),
+          cells: [idx(c, row), idx(c + 1, row)],
         });
       }
     }
@@ -161,12 +208,12 @@ export function makeCandidate(seed: number, t: number): MazeCandidate {
   for (let row = 0; row < R - 1; row++) {
     for (let c = 0; c < C; c++) {
       if (!openDown.has(idx(c, row))) {
-        segs.push({
+        seg({
           dir: 'h',
           line: round(MAZE_TOP + py * (row + 1)),
           a: round(px * c),
           b: round(px * (c + 1)),
-          folded: fold(),
+          cells: [idx(c, row), idx(c, row + 1)],
         });
       }
     }
@@ -174,23 +221,23 @@ export function makeCandidate(seed: number, t: number): MazeCandidate {
   // Boundary: one opening at the entry (bottom) and one at the exit (top).
   for (let c = 0; c < C; c++) {
     if (c !== entry)
-      segs.push({ dir: 'h', line: MAZE_BOTTOM, a: round(px * c), b: round(px * (c + 1)), folded: fold() });
+      seg({ dir: 'h', line: MAZE_BOTTOM, a: round(px * c), b: round(px * (c + 1)), cells: [idx(c, R - 1), -1] });
     if (c !== exit)
-      segs.push({ dir: 'h', line: MAZE_TOP, a: round(px * c), b: round(px * (c + 1)), folded: fold() });
+      seg({ dir: 'h', line: MAZE_TOP, a: round(px * c), b: round(px * (c + 1)), cells: [idx(c, 0), -2] });
   }
 
-  // The asymmetry invariant needs at least one wall on the far half.
-  if (!segs.some((s) => s.folded)) segs[Math.floor(r() * segs.length)].folded = true;
+  return { cols: C, rows: R, openRight, openDown, entry, exit, decoy, segs };
+}
 
+/** A carved maze with its folds decided -> the Level it plays as. */
+export function emitMaze(id: string, maze: CarvedMaze, tx: number, ty: number): Level {
+  const px = 0.5 / maze.cols;
   return {
-    level: {
-      id: `g${seed}`,
-      name: '',
-      start: { x: round(px * (entry + 0.5)), y: 0.92 },
-      goal: { x: round(px * (exit + 0.5)), y: 0.07 },
-      walls: emit(segs, tx, ty),
-    },
-    decoy,
+    id,
+    name: '',
+    start: { x: round(px * (maze.entry + 0.5)), y: 0.92 },
+    goal: { x: round(px * (maze.exit + 0.5)), y: 0.07 },
+    walls: emit(maze.segs, tx, ty),
   };
 }
 
@@ -203,7 +250,7 @@ export function makeCandidate(seed: number, t: number): MazeCandidate {
  * rounded end-corners curve away from the neighbour). Every legitimate
  * overlap fits inside one joint patch of about tx × ty.
  */
-function emit(segs: LineSeg[], tx: number, ty: number): Rect[] {
+function emit(segs: readonly MazeSeg[], tx: number, ty: number): Rect[] {
   const walls: Rect[] = [];
 
   for (const folded of [false, true]) {
@@ -217,7 +264,7 @@ function emit(segs: LineSeg[], tx: number, ty: number): Rect[] {
     }
     const runs: Run[] = [];
     for (const dir of ['h', 'v'] as const) {
-      const lines = new Map<number, LineSeg[]>();
+      const lines = new Map<number, MazeSeg[]>();
       for (const s of own) {
         if (s.dir !== dir) continue;
         if (!lines.has(s.line)) lines.set(s.line, []);

@@ -1,26 +1,119 @@
-# Foldwing — iOS release automation (Capacitor + fastlane).
+# Foldwing — iOS release automation (Capacitor + CocoaPods + fastlane).
 #
 # Auth is an App Store Connect API key, so no Apple-ID password or 2FA prompt.
 # Set ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_PATH, APPLE_ID, APPLE_TEAM_ID — see
-# .env.appstore.example. Run from the project root:
+# .env.appstore.example. Run from the project root.
 #
-#   npm run ios:sync            # web build + cap sync FIRST (see below)
-#   fastlane verify             # does the API key work, does the app exist
-#   fastlane setup_app          # create the App Store Connect record
-#   fastlane beta               # archive + upload to TestFlight
-#   fastlane release_build      # live-ads build, uploaded AND attached to
-#                               # the editable version. Stops there — sending
-#                               # it to Apple is a decision, not a lane.
+# Ads come from Unity LevelPlay, and LevelPlay has NO test inventory: its test
+# flag only unlocks the Test Suite, so every ADS:on build serves the real
+# waterfall. That leaves exactly two kinds of build worth uploading:
 #
-# The web build and `cap sync` deliberately run in the shell BEFORE fastlane:
-# CocoaPods misbehaves under fastlane's bundled Ruby, and forgetting the sync
-# is the classic way to ship the previous build's UI inside a new binary.
+#   npm run release:appstore    # the App Store release — both halves, in order:
+#     npm run ios:appstore        #   N:   ADMODE:live + ADS:on, gated live
+#     fastlane release_build      #        uploaded, NOT attached; its number is
+#                                 #        recorded in build/.live-build-number
+#     npm run ios:sync:adsoff     #   N+1: ADS:off — the ad layer never starts.
+#     fastlane beta_adsoff        #        uploaded and handed to the internal group.
+#                                 #        Runs even when release_build failed.
+#     fastlane attach_build       #   N attached to the editable version, only
+#                                 #   after N+1 is up. Stops there — sending it
+#                                 #   to Apple is a decision, not a lane.
+#
+#   npm run ios:testflight && fastlane beta_adsoff    # any other TestFlight build
+#   npm run ios:sync:mock && fastlane beta_mock       # a TestFlight build with FAKE ads
+#
+#   fastlane expire_real_ads confirm:true   # once N is READY_FOR_SALE
+#   fastlane verify                          # does the API key work, does the app exist
+#   fastlane setup_app                       # create the App Store Connect record
+#
+# TestFlight gets ADS:off by default, or the fake-ads build (VITE_ADS=mock) when
+# the owner asks to see ads on the phone: it draws its own ads in the page and
+# calls no network, so it is as safe to tap as the ads-off build. It never
+# reaches the store — the live target refuses its markers, and attach_build
+# refuses every build beta_mock recorded. `beta` and `beta_testads` are
+# refusals that name the replacement.
+#
+# The web build, `cap sync` and `pod install` deliberately run in the shell
+# BEFORE fastlane: CocoaPods misbehaves under fastlane's bundled Ruby, and
+# forgetting the sync is the classic way to ship the previous build's UI inside
+# a new binary. `build_ipa` then proves what the sync left behind, with the same
+# node gates the npm chains run, before it archives anything.
 default_platform(:ios)
 
+# Lane bodies run with Ruby's cwd set to fastlane/, while fastlane's own actions
+# chdir to the project root. A `system("node", "scripts/…")` from a lane
+# therefore looked for fastlane/scripts/ and could never pass — the ad-mode gate
+# this file used to run refused every archive for that reason alone. Everything
+# below that touches the tree resolves against ROOT explicitly instead of
+# trusting whichever cwd it happens to run under. __dir__ is read here, at parse
+# time, where it is the fastlane/ folder whatever directory fastlane was started
+# from.
+ROOT      = File.expand_path("..", __dir__)
 WORKSPACE = "ios/App/App.xcworkspace"
 SCHEME    = "App"
 APP_ID    = "com.noqyris.foldwing"
 TEAM      = "YMN45WC2QR"
+IPA       = "build/Foldwing.ipa"         # relative to ROOT, where build_app writes it
+ASSETS    = "ios/App/App/public/assets"  # the synced web bundle the archive packs
+
+# The only ad targets an archive may be built for. `test` is deliberately not
+# one: on LevelPlay a test-mode build is a REAL-ads build under another name.
+# `mock` is TestFlight-only (beta_mock): fake ads, no network, never the store.
+AD_TARGETS = %w[live off mock].freeze
+
+# The number of the live build release_build (or a live beta_upload) sent to
+# App Store Connect. Relative to ROOT; build/ is gitignored.
+#
+# It exists because after a two-build release the NEWEST build is the ads-off
+# one, so nothing App Store Connect lists can say which build is the live one —
+# "attach the newest VALID build" attached N+1, an app that never loads an ad.
+# attach_build attaches this number and nothing else unless told build:N
+# force:true, and expire_real_ads refuses to keep it as the newest build.
+LIVE_BUILD_RECORD = "build/.live-build-number"
+
+# Every fake-ads build beta_mock sent to App Store Connect, one number per line.
+# A mock build must never be attached to an App Store version — review would see
+# "FAKE AD" and the store would earn nothing — and App Store Connect cannot tell
+# it from any other build, so attach_build refuses these numbers even with
+# force:true. Relative to ROOT; build/ is gitignored.
+FAKE_ADS_RECORD = "build/.fake-ads-builds"
+
+def fake_ads_builds
+  path = File.join(ROOT, FAKE_ADS_RECORD)
+  File.file?(path) ? File.readlines(path, chomp: true).map(&:strip).reject(&:empty?) : []
+end
+
+def record_fake_ads_build(number)
+  path = File.join(ROOT, FAKE_ADS_RECORD)
+  FileUtils.mkdir_p(File.dirname(path))
+  File.open(path, "a") { |f| f.puts(number) }
+  UI.message("fake-ads build #{number} recorded in #{FAKE_ADS_RECORD}")
+end
+
+# The version a TestFlight-only build carries when no App Store version is in
+# preparation: one minor step past the newest version App Store Connect knows.
+# Apple closes a version's build train once it is released, so an ads-off or
+# mock build between releases cannot reuse the released number.
+def next_marketing_version(app)
+  known = app.get_app_store_versions.map(&:version_string).compact
+  top = known.max_by { |v| Gem::Version.new(v) } or return nil
+  major, minor = Gem::Version.new(top).segments
+  "#{major}.#{(minor || 0) + 1}"
+end
+
+def recorded_live_build
+  path = File.join(ROOT, LIVE_BUILD_RECORD)
+  return nil unless File.file?(path)
+  number = File.read(path).strip
+  number.empty? ? nil : number
+end
+
+def record_live_build(number)
+  path = File.join(ROOT, LIVE_BUILD_RECORD)
+  FileUtils.mkdir_p(File.dirname(path))
+  File.write(path, "#{number}\n")
+  UI.message("live build #{number} recorded in #{LIVE_BUILD_RECORD}")
+end
 
 def asc_key
   app_store_connect_api_key(
@@ -29,6 +122,29 @@ def asc_key
     key_filepath: ENV.fetch("ASC_KEY_PATH"),
     in_house: false
   )
+end
+
+# A real Spaceship token, NOT the hash `app_store_connect_api_key` returns —
+# assigning that silently breaks every call that follows, which is how an early
+# attempt at reading the store version reported "(unchanged)" and shipped 1.1
+# again.
+def asc_app
+  require "spaceship"
+  Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+    key_id: ENV.fetch("ASC_KEY_ID"),
+    issuer_id: ENV.fetch("ASC_ISSUER_ID"),
+    filepath: File.expand_path(ENV.fetch("ASC_KEY_PATH"))
+  )
+  Spaceship::ConnectAPI::App.find(APP_ID)
+end
+
+# Run one of the node release gates from the project root. Output goes straight
+# to the terminal — the gates explain their own refusals better than a summary.
+def gate!(*args, archived: false)
+  UI.message("gate: node #{args.join(' ')}")
+  return if system("node", *args, chdir: ROOT)
+  outcome = archived ? "the archive exists but nothing was uploaded" : "nothing was archived or uploaded"
+  UI.user_error!("release gate refused: node #{args.join(' ')} — #{outcome}. Its output above says why.")
 end
 
 platform :ios do
@@ -68,37 +184,69 @@ platform :ios do
     )
   end
 
-  # Google's test AdMob app id. Passed at archive time by :beta_testads and
-  # never written to disk — the committed default in the pbxproj stays live, and
-  # monetization.test.ts fails if this string ever appears in the project.
-  GAD_TEST_APP_ID = "ca-app-pub-3940256099942544~1458002511"
-
-  desc "Archive a signed App Store build"
+  desc "Archive a signed App Store build. ad_target:live, off or mock — nothing else"
+  # PROVE WHAT IS ACTUALLY IN THE PROJECT, not what the last npm script claimed.
+  #
+  # Three node gates run first, against the tree as the sync left it, and any
+  # refusal stops the lane before a credential is read:
+  #
+  #   check-ad-mode <target> ios/App/App/public/assets
+  #       the synced bundle carries exactly the ADMODE/ADS markers the target
+  #       demands, once each, and is not a Test Suite or ad-id capture screen;
+  #   check-native-sync ios <target>
+  #       the synced bundle IS dist/, and CocoaPods installed LevelPlay and
+  #       every adapter from the current Podfile (the sync-hook trap);
+  #   check-no-google --bundle ios/App/App/public/assets
+  #       no AdMob plugin, pod, plist key, SKAdNetwork id or publisher id
+  #       anywhere, now that the pod graph is the one that will link.
+  #
+  # A marker file used to stand in for the first gate — it recorded which npm
+  # script ran last, and a hand-run `vite build` plus `cap sync` made it a lie.
+  # A check that can be skipped is not a check, so these live here in the
+  # archive path rather than in a script somebody remembers to run.
+  #
+  # AD_TARGET is also handed to xcodebuild, where the "Ad-mode guard" build
+  # phase reads it: an Xcode Archive of a live bundle nobody declared live fails
+  # there even when fastlane is not involved.
   lane :build_ipa do |options|
-    # PROVE WHAT IS ACTUALLY IN THE BUNDLE, not what a marker file remembers.
-    #
-    # TEST_ADS_MARKER records which npm script ran last. That is a claim about
-    # history, and history goes stale: a hand-run `vite build` (or `npm run
-    # build`, which is live by default) followed by `cap sync` replaces the web
-    # assets underneath a marker that still says "test ads". The lane would then
-    # archive live inventory and hand it to TestFlight, which is precisely how
-    # publisher pub-3307486877162157 was closed for invalid traffic on
-    # 2026-08-18 — an owner installs the newest TestFlight build and taps an ad
-    # in what he believes is a test build.
-    #
-    # So the marker stays as the fast, friendly check and this reads the SYNCED
-    # bundle — the exact JavaScript that goes inside the ipa — and refuses on a
-    # mismatch. A check that can be skipped is not a check, so it lives here in
-    # the archive path rather than in a script somebody remembers to run.
-    want = options[:test_ads] ? "test" : "live"
-    unless system("node", "scripts/check-ad-mode.mjs", want, "ios/App/App/public/assets")
-      UI.user_error!("ad-mode check failed: the synced bundle does not carry #{want.upcase} ad units. Re-run the matching npm sync script.")
+    target = options[:ad_target].to_s
+    unless AD_TARGETS.include?(target)
+      UI.user_error!(<<~MSG)
+        build_ipa needs ad_target:live, off or mock (got #{target.empty? ? 'nothing' : target.inspect}).
+
+          live  the App Store build: ADMODE:live + ADS:on       (npm run ios:appstore)
+          off   the default TestFlight build: ADS:off           (npm run ios:sync:adsoff)
+          mock  a TestFlight build with FAKE ads: ADS:mock      (npm run ios:sync:mock)
+
+        There is no test target. LevelPlay has no test inventory — its test flag
+        only unlocks the Test Suite — so a "test" build serves the REAL waterfall.
+        Archiving one for TestFlight puts real ads on the owner's phone, which is
+        the act that closed the AdMob account on 2026-08-18.
+      MSG
     end
+
+    gate!("scripts/check-ad-mode.mjs", target, ASSETS)
+    gate!("scripts/check-native-sync.mjs", "ios", target)
+    gate!("scripts/check-no-google.mjs", "--bundle", ASSETS)
 
     key = asc_key
     # Always land above whatever App Store Connect already has: a duplicate
     # build number is rejected after the upload has already been paid for.
     #
+    # And above whatever THIS machine last archived. The two halves of a release
+    # are separate fastlane runs, minutes apart, and in the minutes after an
+    # upload App Store Connect does not list the new build yet — the ads-off
+    # half starts right after the live upload, without waiting for it to
+    # process — so it could read the same "latest" as the live half and collide
+    # with it. The environment covers two lanes in one run; the file under
+    # build/ (gitignored) covers two runs.
+    last_local_file = File.join(ROOT, "build/.last-build-number")
+    last_local = File.exist?(last_local_file) ? File.read(last_local_file).to_i : 0
+    latest = latest_testflight_build_number(api_key: key, app_identifier: APP_ID) rescue 0
+    next_build = [latest.to_i, ENV["FOLDWING_BUILD_NUMBER"].to_i, last_local].max + 1
+    FileUtils.mkdir_p(File.dirname(last_local_file))
+    File.write(last_local_file, "#{next_build}\n")
+
     # Written straight into CURRENT_PROJECT_VERSION rather than through
     # `increment_build_number`. That action shells out to agvtool, which also
     # rewrites any CFBundleVersion it finds in an Info.plist — including the
@@ -107,11 +255,6 @@ platform :ios do
     # build-20 upload, which would have reintroduced the drift the reference was
     # added to end (build 19 archived as 19 twice because the literal ignored
     # every increment). Xcodeproj touches the build setting and nothing else.
-    latest = latest_testflight_build_number(api_key: key, app_identifier: APP_ID) rescue 0
-    next_build = latest.to_i + 1
-    # Relative to fastlane/, not to the project root: Xcodeproj resolves against
-    # Ruby's cwd, unlike the fastlane actions around it, which resolve against
-    # the root. Mixing the two conventions is a one-line, hard-to-spot break.
     #
     # MARKETING_VERSION comes from App Store Connect for the same reason.
     #
@@ -121,23 +264,25 @@ platform :ios do
     # after the upload, after the review submission, with no warning at archive
     # time. Reading the number from the same place the submission reads it is
     # the only version of this that cannot drift.
-    store_version = begin
-      require "spaceship"
-      # A real Spaceship token, NOT the hash `app_store_connect_api_key`
-      # returns — assigning that silently breaks every call that follows, which
-      # is how the first attempt reported "(unchanged)" and shipped 1.1 again.
-      Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
-        key_id: ENV.fetch("ASC_KEY_ID"),
-        issuer_id: ENV.fetch("ASC_ISSUER_ID"),
-        filepath: File.expand_path(ENV.fetch("ASC_KEY_PATH"))
-      )
-      app = Spaceship::ConnectAPI::App.find(APP_ID)
-      edit = app.get_edit_app_store_version
-      UI.user_error!("no editable App Store version to take a number from") unless edit
-      edit.version_string
+    #
+    # Only the live build has to have a version in preparation — it is the one
+    # that gets submitted. An ads-off or mock TestFlight build between releases
+    # has none to read, so it takes the next version after the newest one.
+    app = asc_app
+    edit = app.get_edit_app_store_version
+    if edit
+      store_version = edit.version_string
+    elsif target == "live"
+      UI.user_error!("no editable App Store version to take a number from")
+    else
+      store_version = next_marketing_version(app)
+      UI.user_error!("no App Store version to take a number from") unless store_version
+      UI.message("no version in preparation — a TestFlight-only #{target} build takes #{store_version}")
     end
 
-    project = Xcodeproj::Project.open("../ios/App/App.xcodeproj")
+    # Resolved against ROOT: Xcodeproj resolves a relative path against Ruby's
+    # cwd (fastlane/ inside a lane), unlike the fastlane actions around it.
+    project = Xcodeproj::Project.open(File.join(ROOT, "ios/App/App.xcodeproj"))
     apply = lambda do |c|
       c.build_settings["CURRENT_PROJECT_VERSION"] = next_build.to_s
       c.build_settings["MARKETING_VERSION"] = store_version if store_version
@@ -150,6 +295,7 @@ platform :ios do
     ENV["FOLDWING_BUILD_NUMBER"] = next_build.to_s
     UI.message("build number -> #{next_build}")
     UI.message("marketing version -> #{store_version || '(unchanged)'}")
+    UI.message("ad target -> #{target.upcase}")
 
     # Fetch (or create) the App Store profile through the ASC API, then sign
     # MANUALLY against it.
@@ -167,86 +313,209 @@ platform :ios do
     )
     UI.message("signing with profile: #{profile}")
 
-    # The AdMob app id is a build setting the plist references, so a test-ads
-    # archive overrides it here and leaves the working tree untouched.
-    args = ["-allowProvisioningUpdates"]
-    if options[:test_ads]
-      UI.important("TEST ADS: overriding GAD_APPLICATION_IDENTIFIER for this archive only")
-      args << "GAD_APPLICATION_IDENTIFIER=#{GAD_TEST_APP_ID}"
-    end
-
     build_app(
       workspace: WORKSPACE,
       scheme: SCHEME,
       export_method: "app-store",
       output_directory: "build",
       output_name: "Foldwing.ipa",
-      xcargs: args.join(" "),
+      xcargs: ["-allowProvisioningUpdates", "AD_TARGET=#{target}"].join(" "),
       export_options: {
         signingStyle: "manual",
         teamID: TEAM,
         provisioningProfiles: { APP_ID => profile }
       }
     )
+
+    # A refused archive must not leave its ipa behind. build_app has already
+    # exported it to build/Foldwing.ipa, and beta_upload — the lane for
+    # retrying after an Apple 500 — uploads whatever that file holds without
+    # either check below, so a build refused here would ship from there.
+    proven = false
+    begin
+      assert_levelplay_linked!(target)
+      assert_scene_manifest!
+      proven = true
+    ensure
+      unless proven
+        refused = lane_context[SharedValues::IPA_OUTPUT_PATH] || File.join(ROOT, IPA)
+        begin
+          if File.file?(refused)
+            File.delete(refused)
+            UI.important("removed the refused #{refused} — beta_upload cannot re-upload it")
+          end
+        rescue SystemCallError => e
+          UI.important("could NOT remove the refused #{refused} (#{e.message}) — delete it before running beta_upload")
+        end
+      end
+    end
   end
 
-  # Which kind of web bundle is currently synced into the native shell.
+  # Every gate above reads the web bundle and the pod graph; none of them reads
+  # the binary. The plugin compiles its real branch only when `canImport(IronSource)`
+  # is true, and otherwise compiles a no-op that logs "IronSourceSDK is not
+  # available" and serves nothing. The Unity Ads adapter is looked up by class
+  # name at runtime, so a link that drops it (no -ObjC, no adapter pod) is not a
+  # build error either. Both failures archive, upload and pass review.
   #
-  # The JavaScript half (which ad UNITS to request) and the native half (which
-  # AdMob APP the SDK reports to) have to agree, and they are set by two
-  # different commands. The npm scripts drop or clear this marker so the lane
-  # can refuse a mismatch instead of discovering it after a tester reports
-  # blank space. build/ is gitignored, so it can never be committed.
-  TEST_ADS_MARKER = "../build/.test-ads"
+  # So read the archived binary itself. Class-name strings survive `strip`; `nm`
+  # symbols do not — search the bytes. The dynamic frameworks are searched too,
+  # in case the plugin pod ever stops being linked statically.
+  #
+  # And read the web bundle the archive PACKED, not only the one it was packed
+  # from. Every gate above, and the Xcode "Ad-mode guard" phase, reads
+  # ios/App/App/public — and the App target's Resources phase copies that folder
+  # into the .app afterwards. This repo runs several sessions in one tree, and a
+  # `cap sync` from one of them (ios:run syncs the mock build) that lands between
+  # the guard and that copy puts a bundle nobody proved into the upload: a mock
+  # or real-waterfall bundle in the store build, or the real waterfall on
+  # TestFlight. The same exact-count gate, pointed at App.app/public/assets by
+  # absolute path, closes that window before anything is uploaded.
+  def assert_levelplay_linked!(target)
+    archive = lane_context[SharedValues::XCODEBUILD_ARCHIVE]
+    app = archive && File.expand_path(File.join(archive, "Products/Applications/App.app"))
+    UI.user_error!("no archive to inspect (XCODEBUILD_ARCHIVE is #{archive.inspect})") unless app && Dir.exist?(app)
+    gate!("scripts/check-ad-mode.mjs", target, File.join(app, "public/assets"), archived: true)
 
-  desc "REMOVED — it distributed real ads to testers. Use beta_testads or release_build."
+    binaries = [File.join(app, "App")] +
+               Dir.glob(File.join(app, "Frameworks/*.framework")).map { |fw| File.join(fw, File.basename(fw, ".framework")) }
+    binaries.select! { |b| File.file?(b) }
+    UI.user_error!("#{app}/App is missing — cannot prove what was linked") unless binaries.include?(File.join(app, "App"))
+    blob = binaries.map { |b| File.binread(b) }.join
+
+    %w[LPMInitRequestBuilder ISUnityAdsAdapter].each do |cls|
+      next if blob.include?(cls)
+      UI.user_error!("#{cls} is not in the archived binary — LevelPlay or its Unity Ads adapter was not linked. " \
+                     "Run `npm run ios:pods`, check `node scripts/check-native-sync.mjs ios <target>`, and archive again. Nothing was uploaded.")
+    end
+    if blob.include?("IronSourceSDK is not available")
+      UI.user_error!("the LevelPlay plugin compiled its no-op branch (canImport(IronSource) was false) — this binary would serve no ads. Nothing was uploaded.")
+    end
+    UI.success("binary check: LPMInitRequestBuilder + ISUnityAdsAdapter linked, no no-op plugin branch")
+  end
+
+  # And the scene manifest, in the Info.plist the archive PACKED. An app built
+  # with the iOS 27 SDK and no UIScene life cycle is refused at launch on iOS
+  # 27 — a black screen and back to the home screen — and nothing in the build,
+  # the upload or processing says so: TestFlight 1.4 (52) shipped that way.
+  # check-native-sync proves the source plist after every sync; this proves the
+  # one Xcode wrote, with its build settings expanded (the delegate reads
+  # `App.SceneDelegate` here), for the same reason the bundle is re-read above.
+  # UIRequiresFullScreen is refused here too, and not only in the source plist:
+  # an INFOPLIST_KEY_ build setting adds it to this plist and to no other.
+  #
+  # `plist` defaults to the archive's; any lane holding an unzipped
+  # Payload/App.app/Info.plist can pass it instead.
+  def assert_scene_manifest!(plist = nil)
+    require "open3"
+    unless plist
+      archive = lane_context[SharedValues::XCODEBUILD_ARCHIVE]
+      plist = archive && File.expand_path(File.join(archive, "Products/Applications/App.app/Info.plist"))
+      UI.user_error!("no archived Info.plist to inspect (XCODEBUILD_ARCHIVE is #{archive.inspect})") unless plist && File.file?(plist)
+    end
+    UI.user_error!("no Info.plist to inspect at #{plist}") unless File.file?(plist)
+    read = lambda do |key|
+      out, _err, status = Open3.capture3("plutil", "-extract", key, "raw", "-o", "-", plist)
+      status.success? ? out.strip : nil
+    end
+    scene = "UIApplicationSceneManifest.UISceneConfigurations.UIWindowSceneSessionRoleApplication.0"
+    delegate = read.call("#{scene}.UISceneDelegateClassName")
+    storyboard = read.call("#{scene}.UISceneStoryboardFile")
+    unless delegate.to_s.end_with?(".SceneDelegate") && storyboard == "Main"
+      UI.user_error!("the archived Info.plist declares no UIScene life cycle (delegate #{delegate.inspect}, storyboard #{storyboard.inspect}) — " \
+                     "iOS 27 would refuse to launch it, as it did TestFlight 52. Restore the manifest (CLAUDE.md, \"UIScene is adopted\") and archive again. Nothing was uploaded.")
+    end
+    full_screen = read.call("UIRequiresFullScreen")
+    if full_screen
+      UI.user_error!("the archived Info.plist sets UIRequiresFullScreen (#{full_screen}) — never add it: the app must accept every window " \
+                     "size iOS gives it (iPhone Duo). Remove the key or its INFOPLIST_KEY_ build setting and archive again. Nothing was uploaded.")
+    end
+    UI.success("scene check: #{delegate} + #{storyboard}.storyboard in the archived Info.plist, no UIRequiresFullScreen")
+  end
+
+  desc "REMOVED — it distributed real ads to testers. Use beta_adsoff or release_build."
   # This lane built with LIVE ad units and handed the result straight to the
-  # internal tester group. That is the exact act that closed publisher
-  # pub-3307486877162157 for invalid traffic on 2026-08-18: builds 42 through 45
-  # went to TestFlight carrying real inventory, on the account owner's own phone.
+  # internal tester group. That is the exact act that closed the AdMob publisher
+  # account for invalid traffic on 2026-08-18: builds 42 through 45 went to
+  # TestFlight carrying real inventory, on the account owner's own phone.
   #
   # It is kept as a refusal rather than deleted. `fastlane beta` is muscle memory
   # and the name is in old notes and shell history; deleting it produces "lane
   # not found", which reads like breakage and invites someone to reconstruct it.
   # A lane that explains why it is gone cannot be rebuilt by accident.
-  #
-  # There is no remaining case for it. Real ads exist to be sold to strangers,
-  # never shown to testers, so the two live paths are:
-  #
-  #   test ads  -> testers      `npm run ios:testflight && fastlane beta_testads`
-  #   real ads  -> App Store    `npm run release:appstore`
   lane :beta do
     UI.user_error!(<<~MSG)
-      `beta` is gone: it put REAL ad units on TestFlight, which is what closed
-      pub-3307486877162157 on 2026-08-18.
+      `beta` is gone: it put REAL ads on TestFlight, which is what closed the
+      AdMob account on 2026-08-18.
 
-        for testers:    npm run ios:testflight && fastlane beta_testads
+        for testers:    npm run ios:testflight && fastlane beta_adsoff
         for the store:  npm run release:appstore
 
-      release:appstore uploads the real-ads build AND follows it with a test-ads
-      build, so the newest thing on TestFlight is never the one with real ads.
+      TestFlight only ever gets an ADS:off build. release:appstore uploads the
+      real-ads build AND follows it with an ads-off one, so the newest thing on
+      TestFlight is never the one with real ads.
     MSG
   end
 
-  desc "TestFlight build that SHOWS ADS — test units. Never submit one of these."
-  # Live units return no-fill until AdMob has reviewed the app, and AdMob only
-  # reviews once the app is PUBLIC on the store, so a tester on a live build
-  # sees blank space and cannot judge placement or frequency at all. Test units
-  # render immediately.
+  desc "REMOVED — on LevelPlay a test-ads build serves REAL ads. Use beta_adsoff."
+  # Under AdMob this lane uploaded Google's test units, which render but pay
+  # nobody and count for nothing. Unity LevelPlay has no such thing: the plugin's
+  # test flag only unlocks the Test Suite, the same unit ids ship in both modes,
+  # and every ADS:on build serves the real waterfall. A "test ads" TestFlight
+  # build would therefore put live inventory on the owner's phone and call it
+  # safe — the most dangerous kind of wrong.
   #
-  # Test ads are now the DEFAULT of the web bundle (VITE_AD_MODE unset), and
-  # GAD_APPLICATION_IDENTIFIER is overridden for this archive only, on the
-  # xcodebuild command line. Nothing is written to the working tree, so the next
-  # ordinary `fastlane beta` is a submission build again with no cleanup step to
-  # forget — which is the step that was forgotten before build 19.
+  # Kept as a refusal for the same reason as `beta`: the name is in memory notes
+  # and shell history.
   lane :beta_testads do
-    unless File.exist?(TEST_ADS_MARKER)
-      UI.user_error!("dist/ was not built with test ads — run `npm run ios:sync:testads` first")
-    end
-    build_ipa(test_ads: true)
+    UI.user_error!(<<~MSG)
+      `beta_testads` is gone: LevelPlay has no test inventory, so a "test ads"
+      build serves REAL ads to whoever opens it.
+
+        for testers:    npm run ios:testflight && fastlane beta_adsoff
+        for the store:  npm run release:appstore
+
+      Ad flows are tested on the fake-ads build instead, which never leaves this
+      machine: `npm run dev:mock` in a browser, `npm run ios:sync:mock` in the
+      simulator.
+    MSG
+  end
+
+  desc "TestFlight build with ADS OFF — the ad layer never starts. The only kind of TestFlight build."
+  # N+1 of every App Store release, and every other TestFlight build besides.
+  #
+  # VITE_ADS=off bakes ADS:off into the bundle: the ad layer never initialises,
+  # so there is no consent prompt, no SDK start, no banner and no waterfall —
+  # nothing to see and nothing to tap, on any phone. The native binary is the
+  # same one the store gets (LevelPlay is still linked, and build_ipa proves
+  # it), so everything that is not an ad is tested for real.
+  #
+  # Run it right after release_build, not later: the gap between the two
+  # uploads is exactly when the owner opens TestFlight to look at the new
+  # version, and until this build lands the newest thing there is real ads.
+  lane :beta_adsoff do
+    build_ipa(ad_target: "off")
     upload_and_distribute
-    UI.important("Uploaded with TEST ADS — for TestFlight only, never submit it.")
-    UI.important("The working tree is untouched and still submission-ready.")
+    UI.success("Uploaded an ADS-OFF build — the newest TestFlight build loads no ad. Never submit it for review.")
+  end
+
+  desc "TestFlight build with FAKE ads (ADS:mock) — drawn in the page, no network. Never for the store."
+  # For looking at the ads on a phone without a cable: banner, interstitial and
+  # rewarded, drawn by src/systems/providers/mock.ts, each saying FAKE AD in
+  # large letters. It calls no ad network, so there is no impression to count
+  # and every surface is safe to tap — the property the ads-off build has, with
+  # the ad UI still on screen. The owner asked for it on 2026-09-22.
+  #
+  # It must never become an App Store build: it earns nothing and review would
+  # see "FAKE AD". The number is recorded in build/.fake-ads-builds BEFORE the
+  # upload, and attach_build refuses it even with force:true. It is not a step of
+  # a release: after release_build, the build that has to follow at once is
+  # still beta_adsoff.
+  lane :beta_mock do
+    build_ipa(ad_target: "mock")
+    record_fake_ads_build(ENV.fetch("FOLDWING_BUILD_NUMBER"))
+    upload_and_distribute
+    UI.success("Uploaded a FAKE-ADS build (ADS:mock) — its ads are drawn in the page and call no network. Never attach or submit it.")
   end
 
   # Upload, then hand the build to the internal group — as two separate steps,
@@ -256,7 +525,7 @@ platform :ios do
   # a trap: pilot's distribute path calls post_beta_app_review_submission, so
   # asking it to distribute ASKS APPLE TO REVIEW THE BUILD. On build 24 that
   # fired and only failed because the Beta App Description was empty — an
-  # accident is the only reason a test-ads build was not sent to Apple.
+  # accident is the only reason a TestFlight build was not sent to Apple.
   #
   # `Build#add_beta_groups` is the plain distribution call and touches no review
   # queue, so distribution goes through that and never through pilot.
@@ -268,12 +537,15 @@ platform :ios do
   # and nobody ran it. A reminder is not automation: six builds were uploaded,
   # submitted and argued about while the last thing anyone could actually
   # install was build 35. So it happens here, in the lane, every time.
-  def upload_and_distribute
-    upload_to_testflight(
+  def upload_and_distribute(ipa: nil)
+    args = {
       api_key: asc_key,
       skip_waiting_for_build_processing: true,
       distribute_external: false
-    )
+    }
+    # Only when given: without it pilot takes the ipa build_app just wrote.
+    args[:ipa] = ipa if ipa
+    upload_to_testflight(**args)
     distribute_internally
   end
 
@@ -286,15 +558,17 @@ platform :ios do
   # listed the new build yet, so the newest it can see is the PREVIOUS one,
   # which is already VALID. The first version of this handed build 41 to the
   # testers and announced it had shipped build 42.
+  #
+  # A processing timeout warns and returns; it does NOT fail the lane. By then
+  # the ads-off build is uploaded, and the upload is what protects a release:
+  # it is the newest build whether or not a group has it yet. Failing here
+  # would make release:appstore skip `attach_build` over a build that is merely
+  # slow, and leave the version unarmed for a reason that `asc-tf-groups
+  # assign` fixes in one command. An App Store Connect error still fails the
+  # lane, and the chain then stops before the attach.
   def distribute_internally
     expected = ENV["FOLDWING_BUILD_NUMBER"]
-    require "spaceship"
-    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
-      key_id: ENV.fetch("ASC_KEY_ID"),
-      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
-      filepath: File.expand_path(ENV.fetch("ASC_KEY_PATH"))
-    )
-    app = Spaceship::ConnectAPI::App.find(APP_ID)
+    app = asc_app
     groups = app.get_beta_groups.select(&:is_internal_group)
     if groups.empty?
       UI.important("No internal group on this app — nothing to distribute to.")
@@ -322,30 +596,36 @@ platform :ios do
     UI.success("build #{build.version} handed to #{groups.map(&:name).join(', ')} — installable now")
   end
 
-  desc "Live-ads build, uploaded and ATTACHED to the editable App Store version. Does not submit."
+  desc "Live-ads build N: uploaded and recorded, NOT attached or submitted. release:appstore attaches it after N+1"
   # THE SUBMISSION BUILD. Everything up to the point where a human says go.
   #
-  # This exists because the version record kept pointing at a stale binary.
-  # Version 1.3 sat with build 41 attached — uploaded before the opening film,
-  # the store, the music, Game Center, the achievements and the reminders were
-  # written — while six newer builds went past it. Nothing in the process
-  # updated the attachment, because attaching was a thing somebody did by hand
-  # in the web UI, and a manual step in a release is a step that eventually does
-  # not happen. That is the same failure that left builds 36-41 undistributed,
-  # and the fix is the same: put it in the lane.
+  # IT UPLOADS AND STOPS. It used to attach N to the editable version too, and
+  # attaching needs N to be VALID, so the lane sat polling Apple for up to
+  # fifteen minutes with N uploaded — and only then did release:appstore start
+  # building N+1. N was the newest build for its whole processing time plus the
+  # ads-off build's, on every release, and every call in that poll was one more
+  # App Store Connect error that could end the run with no N+1 at all. The
+  # attach does not have to come first, so it no longer does: this lane records
+  # N in build/.live-build-number, and `attach_build` runs after beta_adsoff has
+  # uploaded N+1.
   #
-  # The hazard is worse here than a missing tester build. Release notes describe
-  # the newest work, so a stale attachment means the notes promise features the
-  # reviewed binary does not contain — which is not a silent problem, it is a
-  # rejection with the app's own changelog as the evidence.
+  # The attach is still automated, because the version record kept pointing at
+  # a stale binary. Version 1.3 sat with build 41 attached — uploaded before the
+  # opening film, the store, the music, Game Center, the achievements and the
+  # reminders were written — while six newer builds went past it. Attaching was
+  # a thing somebody did by hand in the web UI, and a manual step in a release
+  # is a step that eventually does not happen. Release notes describe the newest
+  # work, so a stale attachment means the notes promise features the reviewed
+  # binary does not contain — a rejection with the app's own changelog as the
+  # evidence.
   #
   # IT UPLOADS BUT DOES NOT DISTRIBUTE — AND THAT IS NOT ENOUGH ON ITS OWN.
   #
   # This lane hands the build to no group: `upload_and_distribute` is not used
   # and no add_beta_groups call happens. On THIS app that does keep it off
   # testers' phones — Foldwing's only internal group reports
-  # hasAccessToAllBuilds=false (verified against the API on 2026-08-18), so an
-  # unassigned build is not offered to it.
+  # hasAccessToAllBuilds=false (verified against the API on 2026-08-18 and again
+  # on 2026-09-16), so an unassigned build is not offered to it.
   #
   # Do not lean on that. It is a per-app setting nobody here chose deliberately,
   # it is `true` on other apps in this portfolio, and CLAUDE.md assumes the
@@ -353,115 +633,172 @@ platform :ios do
   # release step asserts is not a safety property.
   #
   # So the real protection is the SECOND UPLOAD, not the missing group
-  # assignment: `npm run release:appstore` follows this lane with a test-ads
+  # assignment: `npm run release:appstore` follows this lane with an ads-off
   # build N+1, which becomes the newest thing on TestFlight. Running this lane
-  # alone leaves a real-ads binary as the newest build, which is the state that
-  # closed pub-3307486877162157 on 2026-08-18.
+  # alone leaves a real-ads binary as the newest build — the state in which the
+  # AdMob account was closed on 2026-08-18.
   #
   # IT DOES NOT SUBMIT, AND THAT IS THE POINT. The last step of a release is a
-  # decision, not a task. This lane stops with the version armed and the build
-  # in place; sending it to Apple stays a separate, deliberate act.
+  # decision, not a task. Neither this lane nor attach_build sends anything to
+  # Apple; sending it stays a separate, deliberate act.
+  #
+  # THE "HALF DONE" BANNER PRINTS FROM `ensure`, so it prints when the lane dies
+  # as well. The likeliest place for it to die is the upload itself, and a
+  # session that ends on a backtrace with no reminder is exactly the one that
+  # leaves N as the newest build. release:appstore runs the ads-off half
+  # whatever this lane's exit status; the banner is for every other way in.
   lane :release_build do
-    if File.exist?(TEST_ADS_MARKER)
-      UI.user_error!("dist/ holds a TEST ADS bundle — a store build must never carry test units. Run `npm run ios:sync` first.")
+    UI.important("=" * 68)
+    UI.important("This build carries REAL ADS (Unity LevelPlay, ADMODE:live + ADS:on).")
+    UI.important("After processing it becomes a build on TestFlight. Do NOT open it —")
+    UI.important("no tap, and no deliberate look at an ad either: impressions count too.")
+    UI.important("A real-ads build on the owner's phone is what closed the AdMob account.")
+    UI.important("=" * 68)
+
+    # An earlier release's record must not outlive a run that fails before it
+    # writes its own: attach_build would then attach that older build.
+    stale = File.join(ROOT, LIVE_BUILD_RECORD)
+    File.delete(stale) if File.exist?(stale)
+
+    number = nil
+    uploading = false
+    uploaded = false
+    begin
+      build_ipa(ad_target: "live")
+      number = ENV["FOLDWING_BUILD_NUMBER"]
+      # Recorded BEFORE the upload. An upload that raises can still have reached
+      # Apple, and a live build nobody recorded is one expire_real_ads cannot
+      # tell from an ads-off build.
+      record_live_build(number)
+      uploading = true
+      upload_to_testflight(
+        api_key: asc_key,
+        skip_waiting_for_build_processing: true,
+        distribute_external: false
+      )
+      uploaded = true
+    ensure
+      UI.important("=" * 68)
+      if uploaded
+        UI.important("HALF DONE. Real-ads build #{number} is uploaded — NOT attached — and is the newest build.")
+        UI.important("Finish NOW with:  npm run ios:sync:adsoff && fastlane beta_adsoff")
+        UI.important("then:             fastlane attach_build build:#{number}")
+      elsif uploading
+        UI.important("HALF DONE, MAYBE. The upload of real-ads build #{number} failed part-way, and it can")
+        UI.important("still reach App Store Connect. It is recorded in #{LIVE_BUILD_RECORD}.")
+        UI.important("Finish NOW with:  npm run ios:sync:adsoff && fastlane beta_adsoff")
+        UI.important("If #{number} then shows up on TestFlight:  fastlane attach_build build:#{number}")
+        UI.important("If it never does:  npm run release:appstore  (a new pair of builds)")
+      else
+        UI.important("NOTHING UPLOADED — release_build stopped before the upload.")
+        UI.important("ios/App/App/public may still hold the LIVE bundle. Put it back NOW:")
+        UI.important("                  npm run ios:sync:adsoff")
+      end
+      UI.important("(`npm run release:appstore` runs the ads-off half even when this lane fails.)")
+      UI.important("=" * 68)
     end
-    UI.important("=" * 68)
-    UI.important("This build carries REAL AD UNITS.")
-    UI.important("After processing it becomes a build on TestFlight. Do NOT open it,")
-    UI.important("and do NOT tap an ad in it — that is the invalid traffic that closed")
-    UI.important("pub-3307486877162157 on 2026-08-18.")
-    UI.important("=" * 68)
-
-    build_ipa
-    upload_to_testflight(
-      api_key: asc_key,
-      skip_waiting_for_build_processing: true,
-      distribute_external: false
-    )
-    attach_to_version
-
-    # Half a release. Say so, every time, so a session that stops here is
-    # obviously unfinished rather than quietly unsafe.
-    UI.important("=" * 68)
-    UI.important("HALF DONE. A real-ads build is now the newest upload.")
-    UI.important("Finish with:  npm run ios:testflight && fastlane beta_testads")
-    UI.important("(`npm run release:appstore` does both halves in one command.)")
-    UI.important("=" * 68)
   end
 
-  # Wait for the build just uploaded, then point the editable version at it.
+  # Point the editable version at the LIVE build — that build and no other.
   #
-  # Waits for THIS build by number for the same reason distribute_internally
-  # does: in the minutes after an upload the newest build App Store Connect can
-  # see is still the previous one, so "attach the latest" would attach the
-  # wrong binary and look like it had worked.
-  def attach_to_version
-    expected = ENV["FOLDWING_BUILD_NUMBER"]
-    require "spaceship"
-    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
-      key_id: ENV.fetch("ASC_KEY_ID"),
-      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
-      filepath: File.expand_path(ENV.fetch("ASC_KEY_PATH"))
-    )
-    app = Spaceship::ConnectAPI::App.find(APP_ID)
+  # It used to fall back to "the newest VALID build" when no number was given.
+  # After a two-build release the newest build is always N+1, the ads-off one,
+  # and the recovery hints printed no number — so following them attached a
+  # binary that never loads an ad, which passes review and earns nothing. App
+  # Store Connect cannot say which bundle a build carries, so the only evidence
+  # of which build is live is what release_build recorded. Hence: the number is
+  # `build:N` or the record, nothing is guessed, and a number that is not the
+  # recorded live build is refused unless `force:true` says somebody checked.
+  #
+  # Waits for THAT build by number: in the minutes after an upload the newest
+  # build App Store Connect can see is still the previous one. Attaching needs
+  # VALID, which is why this polls — and why it runs after N+1 is uploaded,
+  # never between the two uploads. A timeout FAILS: in release:appstore this is
+  # the last step, and a green chain with nothing attached is a lie.
+  def attach_to_version(build: nil, force: false)
+    given = build.to_s.strip
+    if given.empty? && ENV["FOLDWING_BUILD_NUMBER"]
+      # Older hints spelled it `FOLDWING_BUILD_NUMBER=N fastlane attach_build`.
+      # Silently attaching the record instead of the N somebody typed is a guess.
+      UI.user_error!("attach_build no longer reads FOLDWING_BUILD_NUMBER — say it: " \
+                     "`fastlane attach_build build:#{ENV['FOLDWING_BUILD_NUMBER']}`. Nothing was attached.")
+    end
+    recorded = recorded_live_build
+    number = given.empty? ? recorded : given
+    unless number
+      UI.user_error!("which build? `fastlane attach_build build:N`, where N is the LIVE build release_build uploaded. " \
+                     "There is no #{LIVE_BUILD_RECORD} to read it from, and attach_build never guesses: after a " \
+                     "release the newest build is the ads-off one. Nothing was attached.")
+    end
+    UI.user_error!("build:#{number} is not a build number. Nothing was attached.") unless number.match?(/\A\d+\z/)
+    if fake_ads_builds.include?(number)
+      UI.user_error!("build #{number} is a FAKE-ADS build (beta_mock, #{FAKE_ADS_RECORD}). It earns nothing and review would " \
+                     "see \"FAKE AD\"; it is never attached, force or not. Nothing was attached.")
+    end
 
-    build = nil
+    rerun = "fastlane attach_build build:#{number}"
+    if number != recorded
+      why = recorded ? "the recorded live build is #{recorded}" : "no live build is recorded in #{LIVE_BUILD_RECORD}"
+      unless force
+        UI.user_error!("build #{number} is not the recorded live build (#{why}). Attaching an ads-off build ships an app " \
+                       "that loads no ad. If you have checked that #{number} is the live one — build_ipa printed " \
+                       "`ad target -> LIVE` for it — run `#{rerun} force:true`. Nothing was attached.")
+      end
+      UI.important("force:true — attaching build #{number} although #{why}.")
+      rerun += " force:true"
+    end
+
+    app = asc_app
+    valid = nil
+    found = nil
     20.times do
-      candidates = app.get_builds(sort: "-version")
-      found = expected ? candidates.find { |b| b.version == expected } : candidates.first
+      found = app.get_builds(sort: "-version").find { |b| b.version == number }
       if found && found.processing_state == "VALID"
-        build = found
+        valid = found
         break
       end
-      UI.message("build #{expected || found&.version} is #{found&.processing_state || 'not listed yet'}; waiting")
+      UI.message("build #{number} is #{found&.processing_state || 'not listed yet'}; waiting")
       sleep(45)
     end
-    unless build
-      UI.important("Build #{expected} still processing. Re-run `fastlane attach_build` once it is VALID.")
-      return
+    unless valid
+      UI.user_error!("build #{number} is #{found&.processing_state || 'still not listed'} after 15 minutes — nothing was attached. " \
+                     "Re-run `#{rerun}` once it is VALID.")
     end
 
     version = app.get_edit_app_store_version
-    if version.nil?
-      UI.important("No editable App Store version — create one in App Store Connect, then run `fastlane attach_build`.")
-      return
+    unless version
+      UI.user_error!("no editable App Store version — create one in App Store Connect, then run `#{rerun}`. Nothing was attached.")
     end
 
-    version.select_build(build_id: build.id)
-    UI.success("version #{version.version_string} now points at build #{build.version}")
+    version.select_build(build_id: valid.id)
+    UI.success("version #{version.version_string} now points at build #{valid.version}")
     UI.important("NOT submitted for review. That is a separate, deliberate step.")
   end
 
-  desc "Point the editable App Store version at an already-uploaded build"
-  # The recovery path for when the upload landed but the attach did not — a
-  # timeout, a version that did not exist yet, a build still processing.
-  # FOLDWING_BUILD_NUMBER picks the build; without it, the newest VALID one.
-  lane :attach_build do
-    attach_to_version
+  desc "Attach the LIVE build to the editable App Store version: build:N or build/.live-build-number. Never guesses"
+  # The last step of release:appstore, and the way to finish one that stopped
+  # before it — a processing timeout, a version that did not exist yet.
+  #
+  #   fastlane attach_build                       # the build release_build recorded
+  #   fastlane attach_build build:50              # refused unless 50 is that build
+  #   fastlane attach_build build:50 force:true   # no record here, and 50 checked by hand
+  lane :attach_build do |options|
+    attach_to_version(build: options[:build], force: options[:force].to_s == "true")
   end
 
-  desc "Expire a TestFlight build so nobody can install it. Does NOT affect the App Store."
-  # Step 3 of the two-build release, and the only one that had no command.
-  #
-  # Once the store build reaches READY_FOR_SALE it has done its job, but it is
-  # still sitting in TestFlight carrying real ad units. Expiring removes it from
-  # the tester list without touching the store listing — verified on
-  # com.noqyris.kvizko build 51, which was simultaneously READY_FOR_SALE for 1.2
-  # and expired:true on TestFlight.
+  desc "Expire ONE TestFlight build so nobody can install it. Does NOT affect the App Store."
+  # Expiring removes a build from the tester list without touching the store
+  # listing — verified on com.noqyris.kvizko build 51, which was simultaneously
+  # READY_FOR_SALE for 1.2 and expired:true on TestFlight.
   #
   #   fastlane expire_build build:52
   #
   # Without `build:` it expires the newest one, which is almost never what is
-  # wanted — so it refuses instead of guessing.
+  # wanted — so it refuses instead of guessing. For step 3 of a release, use
+  # expire_real_ads, which finds every build that needs it.
   lane :expire_build do |options|
     number = options[:build] or UI.user_error!("which build? e.g. `fastlane expire_build build:52`")
-    require "spaceship"
-    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
-      key_id: ENV.fetch("ASC_KEY_ID"),
-      issuer_id: ENV.fetch("ASC_ISSUER_ID"),
-      filepath: File.expand_path(ENV.fetch("ASC_KEY_PATH"))
-    )
-    app = Spaceship::ConnectAPI::App.find(APP_ID)
+    app = asc_app
     build = app.get_builds(sort: "-version").find { |b| b.version == number.to_s }
     UI.user_error!("no build #{number} on this app") unless build
     if build.expired
@@ -476,14 +813,195 @@ platform :ios do
     UI.message("The App Store listing is untouched.")
   end
 
-  desc "Re-upload the ipa already in build/ without rebuilding"
+  desc "Step 3: expire every unexpired TestFlight build except the newest. Lists only, unless confirm:true"
+  # Once the store build N is READY_FOR_SALE it has done its job, but it — and
+  # any earlier real-ads build — is still installable from TestFlight. The
+  # newest build is N+1, the ads-off one, and it is the only one that stays.
+  #
+  #   fastlane expire_real_ads                 # print what would be expired
+  #   fastlane expire_real_ads confirm:true    # expire them
+  #
+  # "Every unexpired build but the newest" is the rule, not "build N": a release
+  # that needed a second live attempt leaves two real-ads builds behind, and
+  # expiring by number misses the one nobody wrote down. Only builds numbered
+  # BELOW the one it keeps are ever expired, so the newest ads-off build goes
+  # only if a newer build exists — and the first refusal is about exactly that.
+  #
+  # App Store Connect cannot say which bundle a build carries. This lane knows a
+  # build is live in two ways: it is attached to an App Store version, or it is
+  # the build release_build recorded in build/.live-build-number. A live build
+  # that is neither — archived on another machine, attach never run, build/
+  # deleted — looks like an ads-off build here. That is what the record is for;
+  # keep it.
+  #
+  # Three refusals keep the rule honest, and each fires before anything expires:
+  #   - the newest unexpired build is live (attached, or the recorded live
+  #     build): the ads-off half never landed, and keeping "the newest" would
+  #     keep the real-ads build installable. That holds when it is the ONLY
+  #     unexpired build too — the case an early "nothing to do" once passed
+  #     green, with the real-ads build left as the newest thing on TestFlight.
+  #     Upload N+1 first.
+  #   - a build to be expired is attached to a version that is not released
+  #     (in preparation, in review, pending release, rejected and awaiting a
+  #     resubmission): that version still needs it. Wait for the release.
+  #   - a build to be expired is the recorded live build and is attached to no
+  #     version: attach_build has not run yet, and expiring it would cost the
+  #     release. Attach and release it, or expire it deliberately with
+  #     `expire_build build:N`.
+  #
+  # "Released" is judged on both state fields App Store Connect reports, because
+  # they spell it differently: appStoreState says READY_FOR_SALE, the newer
+  # appVersionState says READY_FOR_DISTRIBUTION for the same version. The list
+  # also holds the states in which a version no longer needs its build at all —
+  # replaced, pulled from sale, or an invalid binary that has to be replaced.
+  RELEASED_STATES = %w[
+    READY_FOR_SALE READY_FOR_DISTRIBUTION REPLACED_WITH_NEW_VERSION
+    REMOVED_FROM_SALE DEVELOPER_REMOVED_FROM_SALE INVALID_BINARY
+  ].freeze
+
+  lane :expire_real_ads do |options|
+    app = asc_app
+    live = app.get_builds(sort: "-version").reject(&:expired)
+    live.sort_by! { |b| [-b.version.to_i, b.uploaded_date.to_s] }
+    if live.empty?
+      UI.success("no unexpired builds — nothing to do")
+      next
+    end
+
+    attached = {}
+    released = {}
+    app.get_app_store_versions.each do |v|
+      next unless v.build
+      states = [v.app_store_state, v.app_version_state].compact.uniq
+      attached[v.build.id] = "#{v.version_string} (#{states.join(' / ')})"
+      released[v.build.id] = states.any? { |st| RELEASED_STATES.include?(st) }
+    end
+    recorded = recorded_live_build
+    describe = lambda do |b|
+      notes = []
+      notes << "attached to #{attached[b.id]}" if attached[b.id]
+      notes << "recorded live build" if b.version == recorded
+      "build #{b.version}  #{b.processing_state}  uploaded #{b.uploaded_date}#{notes.empty? ? '' : "  #{notes.join(', ')}"}"
+    end
+
+    keep = live.first
+    doomed = live.drop(1)
+    UI.message("keep:   #{describe.call(keep)}")
+    doomed.each { |b| UI.message("expire: #{describe.call(b)}") }
+
+    if attached[keep.id] || keep.version == recorded
+      what = attached[keep.id] ? "the App Store build for #{attached[keep.id]}" : "the live build release_build recorded"
+      UI.user_error!("the newest unexpired build (#{keep.version}) is #{what} — the ads-off half never landed, and keeping it " \
+                     "keeps real ads installable. Run `npm run ios:sync:adsoff && fastlane beta_adsoff` first; nothing was expired.")
+    end
+    if doomed.empty?
+      UI.success("only build #{keep.version} is unexpired, and it is neither attached to a version nor the recorded live build — nothing to do")
+      next
+    end
+    pending = doomed.select { |b| attached[b.id] && !released[b.id] }
+    unless pending.empty?
+      UI.user_error!("build(s) #{pending.map(&:version).join(', ')} still belong to a version that is not released " \
+                     "(#{pending.map { |b| attached[b.id] }.join('; ')}). Expire after the release; nothing was expired.")
+    end
+    unattached = doomed.find { |b| b.version == recorded && !attached[b.id] }
+    if unattached
+      UI.user_error!("build #{unattached.version} is the recorded live build and is attached to no version — the release still " \
+                     "needs it. `fastlane attach_build build:#{unattached.version}`, or if it is abandoned, " \
+                     "`fastlane expire_build build:#{unattached.version}`. Nothing was expired.")
+    end
+
+    unless options[:confirm].to_s == "true"
+      UI.important("Dry run — nothing expired. Re-run with confirm:true to expire the #{doomed.size} build(s) above.")
+      next
+    end
+
+    doomed.each do |b|
+      b.expire!
+      UI.success("build #{b.version} expired")
+    end
+    UI.success("done — build #{keep.version} is the only installable TestFlight build. The App Store listing is untouched.")
+  end
+
+  desc "Re-upload build/Foldwing.ipa without rebuilding — a live store ipa, an ads-off ipa or a fake-ads ipa"
   # Apple's uploader returns a 500 often enough to matter, and rebuilding would
   # burn another build number for a transfer that never reached them.
+  #
+  # It used to re-upload whatever sat in build/ with no check at all. build/ is
+  # just the LAST archive, of whatever kind, so this reads the ipa itself — the
+  # web bundle packed inside it — through the same exact-count gate build_ipa
+  # ran, and only two answers are accepted:
+  #
+  #   ADMODE:live + ADS:on   the store build: recorded as the live build,
+  #                          uploaded, NOT handed to any group, and the lane
+  #                          says the ads-off half and the attach are still owed;
+  #   ADMODE:test + ADS:off  a TestFlight build: uploaded and distributed;
+  #   ADMODE:test + ADS:mock a fake-ads TestFlight build: recorded in
+  #                          build/.fake-ads-builds, uploaded and distributed.
+  #
+  # Anything else — a marker-less or doubled bundle, a test-mode ADS:on build —
+  # is refused before a credential is read.
   lane :beta_upload do
-    upload_to_testflight(
-      api_key: asc_key,
-      ipa: "build/Foldwing.ipa",
-      skip_waiting_for_build_processing: true
-    )
+    ipa = File.join(ROOT, IPA)
+    UI.user_error!("#{IPA} does not exist — nothing to re-upload") unless File.file?(ipa)
+
+    require "tmpdir"
+    kind = nil
+    number = nil
+    Dir.mktmpdir("foldwing-ipa") do |tmp|
+      unless system("unzip", "-q", "-o", ipa, "Payload/App.app/public/*", "Payload/App.app/Info.plist", "-d", tmp)
+        UI.user_error!("could not unpack the web bundle from #{IPA} — it cannot be proven, so it is not uploaded")
+      end
+      # An ipa that never went through build_ipa's checks gets the scene check
+      # here: without the manifest iOS 27 will not launch it (TestFlight 52).
+      assert_scene_manifest!(File.join(tmp, "Payload/App.app/Info.plist"))
+      assets = File.join(tmp, "Payload/App.app/public/assets")
+      quiet = { chdir: ROOT, out: File::NULL, err: File::NULL }
+      kind = if system("node", "scripts/check-ad-mode.mjs", "live", assets, **quiet)
+               "live"
+             elsif system("node", "scripts/check-ad-mode.mjs", "off", assets, **quiet)
+               "off"
+             elsif system("node", "scripts/check-ad-mode.mjs", "mock", assets, **quiet)
+               "mock"
+             end
+      unless kind
+        system("node", "scripts/check-ad-mode.mjs", "off", assets, chdir: ROOT) # print what it does carry
+        UI.user_error!("#{IPA} is neither the live store build, an ads-off build nor a fake-ads build (markers above). Refusing to upload it.")
+      end
+      out = `plutil -extract CFBundleVersion raw -o - "#{File.join(tmp, 'Payload/App.app/Info.plist')}" 2>/dev/null`.strip
+      number = out unless out.empty?
+    end
+    UI.message("#{IPA}: build #{number || '(unknown)'}, #{{ 'live' => 'LIVE ads', 'off' => 'ADS OFF', 'mock' => 'FAKE ads' }[kind]}")
+    if kind == "mock"
+      UI.user_error!("the build number could not be read from the ipa, so it cannot be recorded as fake-ads — not uploaded") unless number
+      record_fake_ads_build(number) unless fake_ads_builds.include?(number)
+    end
+
+    if kind == "live"
+      UI.important("=" * 68)
+      UI.important("Re-uploading a REAL-ADS build. It will not be handed to any group.")
+      UI.important("=" * 68)
+      # Recorded before the upload, as release_build does: this IS the live
+      # build, and attach_build and expire_real_ads know it only by the record.
+      if number
+        record_live_build(number)
+      else
+        UI.important("The build number could not be read from the ipa, so nothing was recorded — attach it with build:N force:true.")
+      end
+      upload_to_testflight(api_key: asc_key, ipa: ipa, skip_waiting_for_build_processing: true, distribute_external: false)
+      UI.important("HALF DONE. Finish NOW with:  npm run ios:sync:adsoff && fastlane beta_adsoff")
+      UI.important("If this build is not attached yet, after that:  fastlane attach_build build:#{number || 'N'}")
+    else
+      if number
+        ENV["FOLDWING_BUILD_NUMBER"] = number
+        upload_and_distribute(ipa: ipa)
+      else
+        # distribute_internally without a number would hand out whatever build
+        # App Store Connect lists first — which, minutes after an upload, is
+        # the previous one.
+        upload_to_testflight(api_key: asc_key, ipa: ipa, skip_waiting_for_build_processing: true, distribute_external: false)
+        UI.important("Uploaded, but the build number could not be read from the ipa, so it was not distributed.")
+        UI.important("Finish with: asc-tf-groups assign --app #{APP_ID}")
+      end
+    end
   end
 end

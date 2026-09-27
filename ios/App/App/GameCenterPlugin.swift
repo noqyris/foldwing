@@ -40,24 +40,41 @@ public class GameCenterPlugin: CAPPlugin, CAPBridgedPlugin {
      * The handler can fire more than once over a session (a player switching
      * accounts, returning from Settings), so the promise is resolved exactly
      * once and later calls only update state.
+     *
+     * The sheet is presented only from a view controller that is free. UIKit
+     * refuses to present from one that is already presenting — the ad consent
+     * alert goes up on this same controller — and it refuses silently: no
+     * sheet, no second call of the handler, and a promise that never settled.
+     * So a busy controller resolves `ok: false` with a reason, and the JS side
+     * reads that reason as "never asked" and may try again later.
      */
     @objc func authenticate(_ call: CAPPluginCall) {
         var settled = false
-        let finish: (Bool) -> Void = { ok in
+        let finish: (Bool, String?) -> Void = { ok, reason in
             guard !settled else { return }
             settled = true
-            call.resolve(["ok": ok])
+            var result: [String: Any] = ["ok": ok]
+            if let reason = reason { result["reason"] = reason }
+            call.resolve(result)
         }
 
         DispatchQueue.main.async {
             GKLocalPlayer.local.authenticateHandler = { viewController, _ in
                 if let viewController = viewController {
-                    self.bridge?.viewController?.present(viewController, animated: true)
+                    guard let host = self.bridge?.viewController else {
+                        finish(false, "no-view-controller")
+                        return
+                    }
+                    guard host.presentedViewController == nil else {
+                        finish(false, "presenter-busy")
+                        return
+                    }
+                    host.present(viewController, animated: true)
                     // Not settled yet: the player is being asked. The handler
                     // runs again with the answer.
                     return
                 }
-                finish(GKLocalPlayer.local.isAuthenticated)
+                finish(GKLocalPlayer.local.isAuthenticated, nil)
             }
         }
     }
@@ -172,5 +189,33 @@ extension GameCenterPlugin: GKGameCenterControllerDelegate {
         _ gameCenterViewController: GKGameCenterViewController
     ) {
         gameCenterViewController.dismiss(animated: true)
+    }
+}
+
+/**
+ * The app's bridge view controller: Capacitor's own, plus the plugins that live
+ * in this target.
+ *
+ * WHY IT EXISTS. Capacitor registers only the classes named in
+ * capacitor.config.json `packageClassList`, and `cap sync` builds that list from
+ * npm packages. GameCenterPlugin is not an npm package, so it is never in the
+ * list, and without this subclass `registerPlugin('GameCenter')` on the JS side
+ * talks to nothing. src/systems/GameCenter.ts catches that and reads it as
+ * "not signed in", so the failure is silent: sign-in, the Daily Fold board and
+ * achievements simply never happen.
+ *
+ * capacitorDidLoad() runs after the bridge exists and before the web view loads
+ * the game, so the plugin is registered by the time any script asks for it.
+ *
+ * Main.storyboard names this class (customModule "App"), and the UIScene
+ * configuration in Info.plist (UISceneStoryboardFile = Main) is what creates
+ * it: once, as the root of the scene's window. SceneDelegate deliberately
+ * builds no controller of its own. Anything that ever does create the root
+ * view controller in code must create this class, not a plain
+ * CAPBridgeViewController.
+ */
+class FoldwingBridgeViewController: CAPBridgeViewController {
+    override open func capacitorDidLoad() {
+        bridge?.registerPluginInstance(GameCenterPlugin())
     }
 }

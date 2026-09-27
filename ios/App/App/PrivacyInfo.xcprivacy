@@ -4,19 +4,24 @@
 	Privacy manifest for the App target.
 
 	Foldwing itself has no server, no account and sends nothing anywhere, so
-	NSPrivacyCollectedDataTypes is empty: everything the App Privacy label
-	declares (Device ID, Product Interaction, both for third-party advertising
-	and both used for tracking) is collected by Google AdMob, whose own
-	manifests ship inside GoogleMobileAds and UserMessagingPlatform. Declaring
-	it a second time here would claim the app collects data it never touches.
+	NSPrivacyCollectedDataTypes is empty. What the App Privacy label declares
+	for third-party advertising is collected by the ad SDKs: Unity LevelPlay
+	(the ironSource mediation SDK) and Unity Ads, the one network whose
+	adapter this app installs (package.json, levelplay.networks). Their pods
+	ship privacy manifests of their own, copied into the app by the
+	[CP] Copy Pods Resources phase: IronSourcePrivacyInfo.bundle,
+	IronSourceAdQualityPrivacyInfo.bundle, UnityAdsResources.bundle and
+	UnityCoherenceLib.bundle (found under ios/App/Pods after pod install).
+	Declaring their collection a second time here would claim the app collects
+	data it never touches.
 
-	NSPrivacyTracking is FALSE, and that is not a loophole — the key describes
+	NSPrivacyTracking is FALSE, and that is not a loophole. The key describes
 	what THIS binary does with data, and this binary has no server, no
 	analytics and makes no network call of its own. Asking for ATT permission
-	is not itself tracking; the tracking is AdMob's, and AdMob answers for it
-	in its own manifest. The App Privacy label on App Store Connect is where
-	tracking is disclosed to users, and it still declares Device ID and
-	Product Interaction as used for tracking.
+	is not itself tracking; the tracking is the ad SDKs', and they answer for
+	it in their own manifests. The App Privacy label on App Store Connect is
+	where tracking is disclosed to users, and it still declares data used to
+	track.
 
 	It was TRUE for builds 36-39, every one of which Apple returned as
 	INVALID_BINARY within ninety seconds, because Apple requires at least one
@@ -30,14 +35,18 @@
 	them inside comments: plutil -lint still passes, but a strict parser does
 	not, and there is no reason to hand Apple the question.)
 
-	Do not "fix" it by listing Google's ad domains. iOS blocks traffic to a
-	declared tracking domain once the user denies ATT, which would leave most
-	of the audience with no ads at all. Google omits the key for that reason.
+	Do not "fix" it by listing the ad networks' domains. iOS blocks traffic to
+	a declared tracking domain once the user denies ATT, which would leave most
+	of the audience with no ads at all. None of the manifests the ad pods ship
+	lists a tracking domain or sets NSPrivacyTracking to true either.
 
 	The two accessed-API entries exist because the Capacitor plugins that use
 	them ship NO manifest of their own (verified: @capacitor/preferences and
 	@capacitor/filesystem contain no .xcprivacy; only @capacitor/ios core does),
-	so the app target has to declare them or Apple returns ITMS-91053.
+	so the app target has to declare them or Apple returns ITMS-91053. The
+	UserDefaults entry also covers capacitor-levelplay-ads, which ships no
+	manifest either and keeps the consent answer and the IABTCF_* keys there,
+	for this app only.
 -->
 <plist version="1.0">
 <dict>

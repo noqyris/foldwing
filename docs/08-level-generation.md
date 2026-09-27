@@ -3,11 +3,13 @@
 >
 > This page describes the retired **100-level set of bar obstacles** and the
 > generator that produced it. Neither still exists. The game now ships 300
-> levels — five hand-authored and 295 spanning-tree mazes built by
-> `src/core/MazeGen.ts`, which is also what the Daily Fold runs on the phone —
-> so every level count below is wrong, and any passage about wall placement,
-> interlock reservation or inert-wall stripping describes code that was
-> deleted with the bar set.
+> spanning-tree mazes built by `src/core/MazeGen.ts`, which is also what the
+> Daily Fold runs on the phone — so every level count below is wrong, and any
+> passage about wall placement, interlock reservation or inert-wall stripping
+> describes code that was deleted with the bar set. The tutorial went too: the
+> five hand-authored bar levels, LOCKED wherever they appear below, were
+> replaced in September 2026 by five small mazes from
+> `scripts/genTutorialMazes.ts`, and save schema 3 forgets clears of the old ones.
 >
 > The "Source files" line-count tables are wrong too, and that matters more
 > than it looks: the `file:line` citations throughout were counted against
@@ -37,7 +39,7 @@ and every difference is flagged.
 | `scripts/genLevels.ts` | 467 | The whole generator: candidates, gates, scoring, selection, naming, emit. Not shipped in the bundle. |
 | `src/core/LevelValidator.ts` | 337 | `validateLevel` / `clearance` / `interlock` / `interlockBands` / `difficulty` / `pressure` / `PLAYABLE_CLEARANCE`. The only measurement the generator owns is `turnsIn` (`:279-290`), a descriptive statistic that never gates or sorts. |
 | `src/data/generatedLevels.ts` | 1751 (working tree), 1682 (HEAD) | The generator's only output. Overwritten in full on every run. |
-| `src/data/levels.ts` | 95 | `TUTORIAL_LEVELS` (5, hand-authored, LOCKED) + `GENERATED_LEVELS` → `LEVELS` (100). |
+| `src/data/levels.ts` | 95 | `TUTORIAL_LEVELS` (5, hand-authored, LOCKED) + `GENERATED_LEVELS` → `LEVELS` (100). Today: 5 generated tutorial mazes (`src/data/tutorialLevels.ts`) + 295 → 300. |
 | `src/data/levels.test.ts` | 262 | Re-proves all 100 levels; pins the ramp, the mirror demand and the playability floor. |
 | `src/data/quality.test.ts` | 94 | Pins inert walls, duplicate layouts, wall overlap, sliver widths, unique names. |
 | `src/render/Theme.ts` | 212 | `BASE_WIDTH` 750, `BASE_HEIGHT` 1334, `METRICS.inset`, `METRICS.hitRadius`. |
@@ -46,6 +48,28 @@ and every difference is flagged.
 ---
 
 ## 1. Running it
+
+> **Today there are two generators, and both drive `src/core/MazeGen.ts`.**
+> `MazeGen` builds a maze in three stages: `carveMaze(r, cols, rows)` (the
+> spanning tree, its entry and exit, and every closed edge as an unfolded
+> `MazeSeg`), a fold decision per segment, and `emitMaze(id, maze, tx, ty)`
+> (segments → wall rects). `makeCandidate(seed, t)` is the driver for
+> `scripts/genLevels.ts` (levels 6–300) and for the Daily Fold at runtime: it
+> folds at random at a `t`-dependent fraction. `scripts/genTutorialMazes.ts`
+> (levels 1–5) drives the stages itself and *chooses* its folds. The staged split
+> consumes the rng in exactly the order the old single function did.
+> `levels.test.ts` fingerprints the 295 generated levels and 60 Daily Folds, so a
+> `MazeGen` change that moves either fails the suite.
+>
+> ```
+> npx vite-node scripts/genLevels.ts          # src/data/generatedLevels.ts
+> npx vite-node scripts/genTutorialMazes.ts   # src/data/tutorialLevels.ts
+> ```
+>
+> Both run from the repo root and overwrite their file wholesale. Order matters:
+> the tutorial script reads `GENERATED_LEVELS`, because level 6's `difficulty()`
+> is its ceiling and no tutorial layout may repeat a generated one. So after
+> regenerating the ladder, regenerate the tutorial too.
 
 ```
 npx vite-node scripts/genLevels.ts
@@ -57,7 +81,7 @@ npx vite-node scripts/genLevels.ts
 | Runner | `vite-node` 2.1.9, present only as a transitive dependency of `vitest` (`package-lock.json:2825`, `:2871`). It is **not** in `package.json` devDependencies and there is **no npm script** for generation. `npm test` never runs the generator. |
 | Reads | Nothing from `src/data/`. It imports `Playfield`, `LevelValidator`, `Theme`, and the `Level`/`Rect` types only (`scripts/genLevels.ts:23-35`). It does **not** read the previous `generatedLevels.ts`, so a run is a total replacement, never an amendment. |
 | Writes | `src/data/generatedLevels.ts`, whole file, no backup, no diff check, no confirmation prompt (`:448`). All 95 previously shipped levels are gone. |
-| Does not touch | `src/data/levels.ts` — the five tutorial levels are in a different file and are LOCKED (pinned verbatim by `src/data/levels.test.ts:38-52`). |
+| Does not touch | `src/data/levels.ts` — the five tutorial levels are in a different file and are LOCKED (pinned verbatim by `src/data/levels.test.ts:38-52`). Today they are `src/data/tutorialLevels.ts`, written only by `scripts/genTutorialMazes.ts` and pinned by `keeps the tutorial mazes exactly as generated`. |
 | Exit behaviour | No exit code discipline, no assertion that the pool filled or that the emitted set is valid. Verification is the test suite's job, after the fact. |
 | Prints | One summary line, then a five-row band table (`:450-467`), described in §11. |
 
@@ -311,7 +335,7 @@ drawn as       left wall            reflection of the far wall
 | Generator gate, pre- and post-strip | `>= 0.12` | `scripts/genLevels.ts:345`, `:353` |
 | Every generated level | `> 0.05` | `levels.test.ts:182-187` |
 | Mean over the generated set | `> 0.2` | `levels.test.ts:196-200` (measured: `0.424`) |
-| Tutorial 1–4 exactly zero, tutorial 5 `> 0.1` | — | `levels.test.ts:189-194` (measured: `0 0 0 0 0.167`) |
+| Tutorial 1–4 exactly zero, tutorial 5 `> 0.1` | — | `levels.test.ts:189-194` (measured: `0 0 0 0 0.167`). **Removed September 2026** — the tutorial mazes interlock `0.032`–`0.055` each and are gated by a strict difficulty ramp instead |
 
 **Side effect worth knowing:** `interlock(l) > 0` mathematically requires some
 wall with `w.x + w.w > 0.5` (`LevelValidator.ts:221`). So the post-strip
@@ -453,7 +477,9 @@ const out = Array.from({ length: TARGET }, (_, i) => {
   repeating levels and `quality.test.ts:51-61` (no two identical layouts) fails.
   The linear HEAD version only needed `pool.length ≥ 95`.
 - `id` is `l${i + 6}` — hardcodes the assumption that exactly 5 tutorial levels
-  precede the block (`levels.ts:89`).
+  precede the block (`levels.ts:89`). Today the suite pins it from the other
+  side too: every id must equal its position (`keys every level by its position,
+  because the save stores ids`).
 
 **Naming** (`:203-242`). Adjectives are banded by tone so the name agrees with
 the ramp; the previous flat list called the hardest level in the game

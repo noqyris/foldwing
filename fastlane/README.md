@@ -37,7 +37,7 @@ Create the App Store Connect app record if missing
 [bundle exec] fastlane ios build_ipa
 ```
 
-Archive a signed App Store build
+Archive a signed App Store build. ad_target:live, off or mock — nothing else
 
 ### ios beta
 
@@ -45,7 +45,7 @@ Archive a signed App Store build
 [bundle exec] fastlane ios beta
 ```
 
-REMOVED — it distributed real ads to testers. Use beta_testads or release_build.
+REMOVED — it distributed real ads to testers. Use beta_adsoff or release_build.
 
 ### ios beta_testads
 
@@ -53,7 +53,23 @@ REMOVED — it distributed real ads to testers. Use beta_testads or release_buil
 [bundle exec] fastlane ios beta_testads
 ```
 
-TestFlight build that SHOWS ADS — test units. Never submit one of these.
+REMOVED — on LevelPlay a test-ads build serves REAL ads. Use beta_adsoff.
+
+### ios beta_adsoff
+
+```sh
+[bundle exec] fastlane ios beta_adsoff
+```
+
+TestFlight build with ADS OFF — the ad layer never starts. The only kind of TestFlight build.
+
+### ios beta_mock
+
+```sh
+[bundle exec] fastlane ios beta_mock
+```
+
+TestFlight build with FAKE ads (ADS:mock) — drawn in the page, no network. Never for the store.
 
 ### ios release_build
 
@@ -61,7 +77,7 @@ TestFlight build that SHOWS ADS — test units. Never submit one of these.
 [bundle exec] fastlane ios release_build
 ```
 
-Live-ads build, uploaded and ATTACHED to the editable App Store version. Does not submit.
+Live-ads build N: uploaded and recorded, NOT attached or submitted. release:appstore attaches it after N+1
 
 ### ios attach_build
 
@@ -69,7 +85,7 @@ Live-ads build, uploaded and ATTACHED to the editable App Store version. Does no
 [bundle exec] fastlane ios attach_build
 ```
 
-Point the editable App Store version at an already-uploaded build
+Attach the LIVE build to the editable App Store version: build:N or build/.live-build-number. Never guesses
 
 ### ios expire_build
 
@@ -77,7 +93,15 @@ Point the editable App Store version at an already-uploaded build
 [bundle exec] fastlane ios expire_build
 ```
 
-Expire a TestFlight build so nobody can install it. Does NOT affect the App Store.
+Expire ONE TestFlight build so nobody can install it. Does NOT affect the App Store.
+
+### ios expire_real_ads
+
+```sh
+[bundle exec] fastlane ios expire_real_ads
+```
+
+Step 3: expire every unexpired TestFlight build except the newest. Lists only, unless confirm:true
 
 ### ios beta_upload
 
@@ -85,7 +109,7 @@ Expire a TestFlight build so nobody can install it. Does NOT affect the App Stor
 [bundle exec] fastlane ios beta_upload
 ```
 
-Re-upload the ipa already in build/ without rebuilding
+Re-upload build/Foldwing.ipa without rebuilding — a live store ipa, an ads-off ipa or a fake-ads ipa
 
 ----
 

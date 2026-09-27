@@ -7,8 +7,9 @@
       content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
     />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="theme-color" content="#E9EBE4" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#0F2830" />
+    <meta name="color-scheme" content="dark" />
     <meta name="apple-mobile-web-app-title" content="Foldwing" />
     <title>Foldwing — one line, mirrored</title>
     <meta
@@ -30,21 +31,20 @@
     <meta property="og:url" content="https://www.noqyris.com/foldwing/" />
     <meta name="twitter:card" content="summary" />
     <!--
-      The mechanic as a 32px mark: the fold axis, a stroke, and its reflection.
-      It replaces the stock heart the scaffold shipped with, which said nothing
-      about the game and looked like somebody else's app in a tab strip.
+      The mechanic as a 32px mark: the icon's line leaving its start dot, and
+      its reflection across the fold — tangerine and moonlight on the night
+      sky, as the app wears them. It replaces the stock heart the scaffold
+      shipped with, which said nothing about the game.
     -->
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23E9EBE4'/%3E%3Cpath d='M16 3v26' stroke='%239A9C90' stroke-width='1' stroke-dasharray='2 2'/%3E%3Cpath d='M6 26c0-6 8-5 8-10S6 12 6 6' fill='none' stroke='%2316323C' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M26 26c0-6-8-5-8-10s8-4 8-10' fill='none' stroke='%238E3B62' stroke-width='3' stroke-linecap='round' opacity='0.55'/%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230F2830'/%3E%3Cpath d='M22.5 5v4.5a3 3 0 0 1-3 3h-.8a3.2 3.2 0 0 0-3.2 3.2v1.4a3.2 3.2 0 0 0 3.2 3.2h.8a3 3 0 0 1 3 3V27' fill='none' stroke='%239FB2AE' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M9.5 5v4.5a3 3 0 0 0 3 3h.8a3.2 3.2 0 0 1 3.2 3.2v1.4a3.2 3.2 0 0 1-3.2 3.2h-.8a3 3 0 0 0-3 3V27' fill='none' stroke='%23FF7A52' stroke-width='3' stroke-linecap='round'/%3E%3Ccircle cx='9.5' cy='27' r='2.6' fill='%23FF7A52'/%3E%3Ccircle cx='22.5' cy='27' r='2.6' fill='%239FB2AE'/%3E%3C/svg%3E"
     />
     <style>
       html,
       body {
         margin: 0;
         padding: 0;
-        /* Paper bleeds to the screen edge so FIT letterboxing is invisible. */
-        background: #e9ebe4;
         overflow: hidden;
         -webkit-user-select: none;
         user-select: none;
@@ -59,11 +59,30 @@
        * Phaser caches for input, so touches land offset from the visuals. This
        * game is nothing but pointer accuracy, so that offset would be fatal:
        * position:fixed + inset:0 removes every axis of scroll and keeps the
-       * canvas rect and the pointer transform in permanent agreement.
+       * canvas rect and the pointer transform in permanent agreement. #app,
+       * which holds the canvas, is fixed too — see below.
        */
+      /*
+       * The page is the night sky, and it bleeds to every edge: the bands the
+       * canvas leaves (the status bar, the home indicator, a wide shape's desk)
+       * are this. The canvas paints the SAME radial in its own place on the
+       * page (render/Paper.ts), so there is no seam where the two meet.
+       * --fw-sky is rewritten from the theme's tokens at boot; this copy is
+       * the first paint, before any script, and must match the launch screen:
+       * no light frame anywhere between the icon and the menu.
+       */
+      html {
+        background: var(
+          --fw-sky,
+          radial-gradient(90% 42% at 50% 27%, #1d4450 0%, #0f2830 50%, #081419 100%) #081419
+        );
+        color-scheme: dark;
+      }
+      body {
+        background: transparent;
+      }
       html,
-      body,
-      #app {
+      body {
         position: fixed;
         top: 0;
         left: 0;
@@ -72,13 +91,92 @@
         width: 100%;
         height: 100%;
       }
+      /*
+       * The game fits into the SAFE area, each side on its own; the paper
+       * behind it still runs to every edge. Phaser's FIT measures this box, so
+       * the canvas can never sit under a status bar, a camera or the home
+       * indicator — on iPhone Duo those are 84pt down one side (outer display,
+       * inner display held wide) or 82pt across the top (inner display held
+       * tall), which no in-canvas offset can absorb: the playfield is fixed.
+       * No width/height here: the four insets ARE the size.
+       *
+       * --fw-safe-*: the DEV-only ?safe=t,r,b,l switch (render/SafeArea.ts),
+       * so a desktop browser can play the Duo's shapes. Never set in a build,
+       * where each side is simply its env() value.
+       */
+      #app {
+        position: fixed;
+        /* Over the page's dim (body::after), under the launch mark. */
+        z-index: 2;
+        top: var(--fw-safe-top, env(safe-area-inset-top, 0px));
+        right: var(--fw-safe-right, env(safe-area-inset-right, 0px));
+        /* --fw-banner-lift: see main.ts; non-zero only in very short windows. */
+        bottom: calc(var(--fw-safe-bottom, env(safe-area-inset-bottom, 0px)) + var(--fw-banner-lift, 0px));
+        left: var(--fw-safe-left, env(safe-area-inset-left, 0px));
+      }
       canvas {
         display: block;
         touch-action: none;
       }
+      /*
+       * The page's dim: a scrim's colour and alpha over the bands the canvas
+       * leaves (UI.ts dimPage). A layer, not a colour, because the page is a
+       * gradient and only a translucent layer dims it exactly as the scrim
+       * dims the canvas's copy. Under #app, so the canvas is dimmed by its own
+       * scrim only.
+       */
+      body::after {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background: var(--fw-dim, transparent);
+        pointer-events: none;
+        z-index: 1;
+      }
+      /*
+       * The launch mark, exactly where the native launch screen draws it: its
+       * image is a square aspect-filled over the whole screen, so the mark is
+       * centred and 9.61 % of the screen's longer side tall. The web view
+       * takes over from that screen showing the same picture; the mark leaves
+       * with a short fade on the first scene's first frame (BootScene).
+       */
+      #boot-mark {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        height: calc(9.61 * 1vmax);
+        overflow: visible;
+        transform: translate(-50%, -50%);
+        z-index: 10;
+        pointer-events: none;
+        transition: opacity 200ms ease;
+      }
+      /*
+       * Desk mode (main.ts sets data-desk when the board has 40pt or more of
+       * sky on each side — iPhone Duo's inner display): the page around the
+       * board becomes a desk and the board a sheet lying on it.
+       *
+       * The desk is a wash OVER the page rather than a page colour, so it
+       * stays darker than the sheet under every scrim (the page's dim is its
+       * own layer, body::after, over this one). Over the sky it darkens the
+       * night by a third. It sits under #app, which comes later
+       * in the document, and the canvas paints its own sky, so only the margins
+       * take it.
+       */
+      html[data-desk] body::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.3);
+        pointer-events: none;
+      }
+      html[data-desk] canvas {
+        box-shadow: 0 0 0 1px rgba(255, 248, 236, 0.06), 0 16px 40px rgba(0, 0, 0, 0.5);
+      }
     </style>
   </head>
   <body>
+    <svg id="boot-mark" viewBox="126 103 772 857.5" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><defs><filter id="bm-g1" x="-60%" y="-30%" width="220%" height="160%"><feGaussianBlur stdDeviation="24"/></filter><filter id="bm-g2" x="-80%" y="-40%" width="260%" height="180%"><feGaussianBlur stdDeviation="44"/></filter></defs><g filter="url(#bm-g1)" opacity=".25"><path d="M818 150 V288 A95 95 0 0 1 723 383 H694 A100 100 0 0 0 594 483 V541 A100 100 0 0 0 694 641 H723 A95 95 0 0 1 818 736 V880.5" stroke="#9fb2ae" stroke-width="94"/><circle cx="818" cy="880.5" r="80" fill="#9fb2ae" stroke="none"/></g><path d="M818 150 V288 A95 95 0 0 1 723 383 H694 A100 100 0 0 0 594 483 V541 A100 100 0 0 0 694 641 H723 A95 95 0 0 1 818 736 V880.5" stroke="#9fb2ae" stroke-width="94"/><circle cx="818" cy="880.5" r="80" fill="#9fb2ae" stroke="none"/><g filter="url(#bm-g2)" opacity=".75"><path d="M206 150 V288 A95 95 0 0 0 301 383 H330 A100 100 0 0 1 430 483 V541 A100 100 0 0 1 330 641 H301 A95 95 0 0 0 206 736 V880.5" stroke="#ff7a52" stroke-width="94"/><circle cx="206" cy="880.5" r="80" fill="#ff7a52" stroke="none"/></g><path d="M206 150 V288 A95 95 0 0 0 301 383 H330 A100 100 0 0 1 430 483 V541 A100 100 0 0 1 330 641 H301 A95 95 0 0 0 206 736 V880.5" stroke="#ff7a52" stroke-width="94"/><circle cx="206" cy="880.5" r="80" fill="#ff7a52" stroke="none"/><path d="M206 150 V288 A95 95 0 0 0 301 383 H330 A100 100 0 0 1 430 483 V541 A100 100 0 0 1 330 641 H301 A95 95 0 0 0 206 736 V880.5" stroke="#ffd9c2" stroke-width="35.7" opacity=".85"/><circle cx="182" cy="854.5" r="22" fill="#fff" stroke="none" opacity=".4"/></svg>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

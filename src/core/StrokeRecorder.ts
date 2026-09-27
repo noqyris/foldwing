@@ -228,6 +228,20 @@ export function renderStroke(
 }
 
 /**
+ * How many trailing points of `renderStroke`'s output can still move when more
+ * raw samples are appended; everything before them is final.
+ *
+ * `densify` only ever appends. Each Chaikin pass keeps its last input point as
+ * the path's endpoint, and the next sample replaces it, so one pass leaves the
+ * last point provisional — and each further pass doubles that reach and adds
+ * one. (Until there are three points to smooth, nothing is final: the passes
+ * have not started yet.)
+ */
+export function renderTailReach(iterations: number): number {
+  return 2 ** iterations - 1;
+}
+
+/**
  * The win figure: the stroke, then its mirror walked backwards, forming one
  * closed loop. Going backwards is what joins tip-to-tip and heel-to-heel
  * instead of crossing the middle — the difference between a butterfly and a

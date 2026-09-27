@@ -3,11 +3,13 @@
 >
 > This page describes the retired **100-level set of bar obstacles** and the
 > generator that produced it. Neither still exists. The game now ships 300
-> levels — five hand-authored and 295 spanning-tree mazes built by
-> `src/core/MazeGen.ts`, which is also what the Daily Fold runs on the phone —
-> so every level count below is wrong, and any passage about wall placement,
-> interlock reservation or inert-wall stripping describes code that was
-> deleted with the bar set.
+> spanning-tree mazes built by `src/core/MazeGen.ts`, which is also what the
+> Daily Fold runs on the phone — so every level count below is wrong, and any
+> passage about wall placement, interlock reservation or inert-wall stripping
+> describes code that was deleted with the bar set. The tutorial went too: the
+> five hand-authored bar levels, LOCKED wherever they appear below, were
+> replaced in September 2026 by five small mazes from
+> `scripts/genTutorialMazes.ts`, and save schema 3 forgets clears of the old ones.
 >
 > The "Source files" line-count tables are wrong too, and that matters more
 > than it looks: the `file:line` citations throughout were counted against
@@ -16,6 +18,13 @@
 >
 > Kept because the reasoning is still worth having. For what the game actually
 > does now, see [../README.md](../README.md).
+>
+> **1.4 (September 2026) rebuilt the Menu and the win.** §3 (MenuScene), §6.6 (the win
+> path), §6.9–§6.10 (rescue and the Reveal pill) and §6.12 (call sites) are rewritten
+> for it; the rest of this page is the 1.3 scene layer, whose line numbers are only
+> hints. The rules the new surfaces show — missions, bookmarks, chapter marks,
+> reminders — are in [09-systems.md](09-systems.md) §6–§7, the store in
+> [10-monetization.md](10-monetization.md) §7.
 
 ---
 
@@ -35,7 +44,7 @@ Share are called relative to the visuals.
 | --- | --- | --- |
 | `src/main.ts` | 67 | Phaser.Game config; scene registration order; ScaleManager refresh hooks |
 | `src/scenes/BootScene.ts` | 55 | Load save, warm ad/store SDKs, hand off to Menu |
-| `src/scenes/MenuScene.ts` | 216 | Home page: Continue/Play, Levels, Gallery, IAP rows |
+| `src/scenes/MenuScene.ts` | — | Home page: streak and balance chips, missions strip, Continue/Play, the Daily card, Levels \| Gallery \| Store, Settings and the sheets, the arrival moments |
 | `src/scenes/LevelSelectScene.ts` | 308 | 100-card scrollable grid, baked into one atlas |
 | `src/scenes/GameScene.ts` | 707 | The core loop and the input state machine |
 | `src/scenes/GalleryScene.ts` | 300 | Every solved maze with its solution, baked into atlases; tap to share |
@@ -137,16 +146,23 @@ Every `scene.start()` in the codebase:
    - `Ads.setAdsRemoved(save.adsRemoved)` — `:31`. **Order is load-bearing**:
      the entitlement must reach the ad layer before anything can request an ad,
      or an owner sees a banner flash on frame one.
-   - `this.scene.start('Menu')` — `:32`
-   - `void Ads.init()` — `:34`, fire-and-forget, after the handoff
-   - `void Iap.init()` — `:52`, deliberately a **no-op** (`Iap.ts:62-64`)
+   - the settings applied (sound, music, haptics, reduced motion, the film's too);
+     on the web Daily, straight into today's fold
+   - since 1.4: `Nudges.takeRoute()` — a reminder tap that launched the app routes
+     to `Game { daily: today }` when today's Daily is open and unfolded; otherwise
+     `this.scene.start('Menu')`
+   - `void Iap.init()`, deliberately a **no-op**
+   - `Nudges.warm()` then `Nudges.rebuild()`, and `Nudges.clearDelivered()` — the
+     reminder plan rewritten from the save, never prompting
+   - (`Ads.init()` is main.ts's, after the opening film)
 
 Traps:
 
 - Gameplay never waits on an ad SDK. Consequence: Menu's `showBanner()` usually
-  lands before `AdMob.initialize()` resolves; `Ads` remembers the request in
-  `bannerWanted` and replays it at the end of `init()` (`Ads.ts:30-39`, `:103`,
-  `:120`).
+  lands before the SDK is up; `Ads` remembers the request in `bannerWanted` and
+  replays it once the SDK starts. (Since the move to Unity LevelPlay, `Ads.init()`
+  is called from `main.ts` after the opening film, not from `BootScene`: the ATT
+  alert and the consent modal must not land on top of the film.)
 - No silent restore at launch, by design — a StoreKit touch on a signed-out
   device puts a repeating "Sign in to Apple Account" wall over a free game
   (`BootScene.ts:35-51`, `Iap.ts:66-82`).
@@ -156,63 +172,73 @@ Traps:
 
 ## 3. MenuScene
 
-`create()` (`MenuScene.ts:35-163`). Payload: none.
+`create()`. Payload: none. **Rewritten in 1.4** around one idea — the home page shows
+what the player has and what they earned — and one layout for everyone.
 
-**Index clamping (`:44`)** — `nextIndex = Math.min(Math.max(0, save.unlockedIndex), LEVELS.length - 1)`.
+**A reminder tap first.** Before anything draws, `Nudges.takePendingRoute(this.registry)`
+takes a route a warm reminder tap left (`PENDING_ROUTE`); `'daily'` starts `Game
+{ daily: today }` and returns.
+
+**Index clamping** — `nextIndex = Math.min(Math.max(0, save.unlockedIndex), LEVELS.length - 1)`.
 Belt-and-braces on top of `coerce()` in Progress: an out-of-range index would
 throw inside `create()`, which leaves **no scene running at all** — a blank
 canvas with nothing to press, and the bad save is never rewritten, so every
-relaunch dies identically (`Progress.ts:94-104`).
+relaunch dies identically.
 
-**Label/action coupling (`:50`)** — `resuming = nextIndex > 0 || save.totalWins > 0`.
-Both the caption and the button target derive from `nextIndex`; reading
-`resuming` off `totalWins` alone made the button say "Play" and then open level 6
-(the state a rewarded skip leaves).
+**Label/action coupling** — `resuming = nextIndex > 0 || save.totalWins > 0`. Both the
+caption and the button target derive from `nextIndex`; reading `resuming` off
+`totalWins` alone made the button say "Play" and then open level 6 (the state a
+rewarded skip leaves).
 
-**Layout is a cursor stack, not hand-placed rows (`:76-85`)** — geometry derives
-from the row count so it cannot drift past the banner line:
+**Layout is a pure function** — `MenuLayout.menuLayout(footLine, floor)`, tested at
+canvas scales 0.317 to 0.626. The 1.3 menu grew a "selling foot" (Remove ads,
+Restore) whenever something was for sale, which hid the reveal count from exactly the
+players who had not paid; that branch is gone.
 
-| Symbol | Value when `selling` | Value when not |
+| Element | Where (base units) | What |
 | --- | --- | --- |
-| `selling` | `Iap.available && !save.adsRemoved` | — |
-| `rowGap` | `pt(7)` | `pt(11)` |
-| `tallRow` | `pt(66)` | `pt(66)` |
-| `row` | `pt(54)` | `pt(54)` |
-| `cursorY` start | `pt(325)` | `pt(355)` |
+| Streak chip | top bar, `TOP_BAR_Y` = pt(52), left | flame + streak + one bookmark glyph per bookmark; faint at 0; the repairable run faint with an accent dot; hidden until the first Daily finish; opens the Streak sheet |
+| Balance chip | top bar, right-aligned | eye + count + an accent "+" where the store sells (`storeSells()`); ∞ for owners; opens the store. Hidden in the first session |
+| ••• | top bar | Settings |
+| Missions strip | `STRIP_Y` = pt(100), fixed under the bar | three tokens (ring or check + short label), one tap target, opens the Missions sheet; shown once missions are open |
+| Wordmark / tagline | pt(211) / pt(285) | the reflecting wordmark; "draw one line. its mirror must survive too." before the first win |
+| Play / Continue | `STACK_TOP` = pt(321), `PLAY_H` pt(66) | sub "N. Name · 9 of 20 in chapter 3" |
+| Daily card | `DAILY_H` pt(88) | `DailyCard`: six faces, the week strip, "#53 · Tue 22 Sep" |
+| Levels \| Gallery \| Store | `TRIO_H` pt(54), thirds | "Store" only where there is a store, not for owners, and not in the first session; NEW badge until the starter has been seen |
+| Stats line | label, 0.75 | "Fold Sense 62 · 112 folded · 47 medals", counted against LEVELS; hidden while nothing is folded |
 
-`place(h)` returns the row centre and advances `cursorY` by `h + rowGap`.
+The stack lifts at most `PAGE_LIFT_MAX` (pt(30)) toward the top and then closes its row
+gaps from pt(11) to pt(4) before the stats line goes; nothing ever crosses the foot
+line above the banner, every row uses `minTap` capped by the layout's `tapMax`, and
+the tagline keeps pt(16) clear of the primary button. **The first session**
+(`DailyCard.firstSession`: tutorial not done, no Daily ever) shows none of the
+economy: no balance chip, no Store, a locked Daily card, no gift said.
 
-Objects built, in order: `wordmark` at `pt(215)` (`:52`), tagline at `pt(295)`
-(`:56`, kept clear of the wordmark's reflection), primary button
-`Continue`/`Play` with `sub` = `` `${nextIndex + 1}. ${LEVELS[nextIndex].name}` ``
-(`:87-93`), `Levels` (`:95`), `Gallery` (`:106`), then **either** the reveal chip
-(`:129-131`) **or** the two purchase rows `Remove ads[· price]` at `pt(44)` and
-`Restore purchases` at `pt(34)` (`:133-154`). The chip gives up its slot when
-there is something to sell — five rows plus the chip runs off the bottom of the
-canvas, which is how "Restore purchases" once drew half-cut.
+**What arrived is said on entering**, as toasts and never as a modal, one at a time, in
+this order: a bookmark that kept the streak, chapters folded before marks existed (the
+backlog, paid by `settleChapterMarks('backlog')` here), the day's free reveal, a
+purchase or restore (`MENU_CELEBRATE`), the streak going up after a Daily
+(`MENU_STREAK_FROM`). Each flies a token into the chip it changes. The grants are
+already in the save — a moment only shows them — and unplayed moments carry across a
+restart in the registry. The gift waits for the opening film to be gone. Every toast
+goes through `say()`: with a sheet up it is placed above the sheet's card, and the
+answer to a tap is `urgent`, shown at once rather than behind the news.
 
-`enter(this, entering)` with the default 45 ms stagger (`:159`, `UI.ts:349-356`),
-then `void Ads.showBanner()` (`:162`).
+**Sheets** — Settings, Store, Streak, Missions — set `sheetOpen`, which `refit()`
+(a resize), the midnight rollover and a warm reminder tap all wait on. Settings rows:
+Sound, Music, Haptics, Reduced motion (toggles fire on release, with
+`Haptics.select()`), Reminders (where a reminder can be delivered; "Daily fold · around
+7 pm" or "off in iOS Settings"), Leaderboard | Achievements (with Game Center), Rate
+Foldwing | Restore purchases (Restore where there is a store), Privacy choices (where
+there is an ad SDK), then "Foldwing 1.4" — five taps on it show the diagnostic line —
+and [Close].
 
-Reveal chip (`buildRevealChip`, `:166-188`): text is `unlimited reveals` when
-`Progress.data.adsRemoved`, else `` `${n} ${n === 1 ? 'reveal' : 'reveals'}` ``;
-`· ${figureCount} folded` is appended when `figureCount > 0`.
+**The midnight rollover** unsubscribes the grant listener *before* the new day's
+top-up and restarts the scene, so the gift waits in `takeUnshownGrants()` for the
+rebuilt menu instead of reaching one that is shutting down.
 
-IAP handlers:
-
-```ts
-private async purchase(): Promise<void>   // MenuScene.ts:198
-private async restore(): Promise<void>    // MenuScene.ts:207
-```
-
-- `purchase()`: `Haptics.tap()` → `await Iap.buyRemoveAds()` → if owned,
-  `Progress.setAdsRemoved(true)`, `Ads.setAdsRemoved(true)`, `scene.restart()`.
-- `restore()`: `Haptics.tap()` → `await Iap.restore()` → `applyEntitlement(result)`
-  (never downgrades on `null`, `Iap.ts:204-206`) → only on `result === true`:
-  `Ads.setAdsRemoved(true)` + `scene.restart()`.
-
-Teardown: no SHUTDOWN handler. `button()` removes its own scene-level
-`POINTER_UP` listener on container destroy (`UI.ts:292-294`).
+Teardown: the SHUTDOWN handler unsubscribes `onGrant` and carries unplayed moments.
+`button()` removes its own scene-level `POINTER_UP` listener on container destroy.
 
 ---
 
@@ -287,11 +313,14 @@ remove the atlas was still resident after returning to the menu.
 - Empty state: two labels, `'Nothing folded yet.'` and
   `'Clear a level and its figure lands here.'`. **No grid, no second camera, no
   atlas, no ScrollView** are created in this branch.
-- Populated branch: `top = pt(126)`,
-  `bottom = BASE_HEIGHT - METRICS.bannerReserve - pt(6)`,
-  `cardH = cardW * CARD_ASPECT` with `CARD_ASPECT = 1.5`. Same bake → cameras →
-  `ScrollView` sequence as LevelSelect. Every row has `onArm` and `onTap` (no
-  locking).
+- Populated branch: `top = HEADER.listTop` (shared with LevelSelect),
+  `bottom = listBottom(Ads.enabled)` — the banner reserve only where a banner
+  can show — and `cardH = cardW * CARD_ASPECT` with `CARD_ASPECT = 1.5`. Cameras
+  → `ScrollView` as LevelSelect, but the cards bake progressively behind blank
+  placeholders (see 05-rendering §6), and the grid camera renders BEFORE the
+  main one so sheets and cards drawn on the main camera land on top. Every row
+  has `onArm` and `onTap` (no locking); the list ignores presses for its first
+  300 ms and while a sheet is open.
 - `enter(this, entering, 26)`.
 
 **What a card shows.** The whole maze, the line that solved it, its reflection,
@@ -315,9 +344,13 @@ back blank. Card art: shadow + paper + `t.ink` 0.022 wash, `paintFigureInto`
 into the box inset by `pad = pt(5)` and `pt(14)` shorter at the bottom, plus a
 `` `${(figure.ms / 1000).toFixed(1)}s` `` label.
 
-`share(figure)`: re-entrancy guarded by `this.busy`; `Haptics.tap()` →
-`renderShareCard(figure, shareCardOptions(figure))` → `Share.shareFigure({ dataUrl, title: 'My foldwing', text: shareText(figure), fileName: \`foldwing-${figure.levelId}-${figure.at}.png\` })`,
-with `busy` cleared in `finally`. If `renderShareCard` returns falsy the function
+A card tap opens `chooseShare(figure)` — a sheet with "Share the replay" (where
+`replayVideoSupported()`) and "Share this fold", dimming the page with it. The
+picture: re-entrancy guarded by `this.busy`;
+`renderShareCard(figure, shareCardOptions(figure))` → `Share.shareFigure({ dataUrl, title: 'My foldwing', text: shareText(figure), fileName: shareFileName(figure.levelName, 'png') })`,
+with `busy` cleared in `finally`. The replay renders behind `progressCard`,
+which offers Cancel after 2 s and is aborted at 45 s (the same bounds as the
+win screen's — see 09-systems, Share). If `renderShareCard` returns falsy the function
 returns early (still clearing `busy`). `shareCardOptions` and `shareText` live in
 `render/ShareCard.ts` and are shared with the win-screen share pill, so both
 carry the same caption and the same "Can you beat me?".
@@ -425,10 +458,11 @@ is safe today — but adding a read path without a write path breaks it.
 | `idle` | `idle` | `pointerdown` farther than the grab radius — silently ignored | `:210` |
 | `drawing` | `failed` | `collision.blocks(prev, cursor)` and not a goal-first segment | `:245-251` |
 | `drawing` | `won` | `segCircleEntryT(prev, cursor, goalPx, METRICS.goalRadius) !== null`, or blocked-but-`goalT < hitT` | `:249`, `:254-257` |
-| `drawing` | `idle` | `pointerup` from the active pointer before the goal — **no penalty** | `:277-281` |
+| `drawing` | `idle` | `pointerup` from the active pointer before the goal — **no penalty**; also `POINTER_UP_OUTSIDE` (a mouse released off the canvas) and a move with no button held | `onPointerUp`, `onPointerMove` |
+| `drawing` | `idle` | the canvas really moved or resized under the stroke (rotation, a fold, Split View — `onCanvasMoved` on `Scale.Events.RESIZE`, keyed on the rounded canvas bounds) — abandoned as a lift: no death, no flash. The next move would otherwise map to a different board point and join the two through a wall | `onCanvasMoved` |
 | `failed` | `idle` | `failTimer` after `METRICS.failFlashMs` (400) | `:312-317` |
 | `failed` | `idle` | **any** `pointerdown` — abandons the flash immediately, same event then falls through to the idle grab test | `:202-203` |
-| `won` | (next level) | `pointerdown` with `this.time.now >= this.advanceReadyAt` and not over the share pill | `:191-197` |
+| `won` | (next level) | `pointerdown` with `this.time.now >= this.advanceReadyAt`, not over the share row, not in the header band, and not while a share is in flight or within `SHARE_QUIET_MS` (400) of one settling | `onPointerDown` |
 | any | `idle` | `loadLevel()` → `resetToIdle()` | `:179` |
 
 Pointer filtering: only events whose `pointer.id === this.activePointer` are
@@ -475,54 +509,89 @@ collision-tested cursor with it.
 on a crossing it sets `passed = true` and fires `Audio.note()` then
 `Haptics.tick()`. Gates are re-armed at every `pointerdown` (`:221`).
 
-### 6.6 Win path — exact order (`win(entry: Vec2)`, `:329-375`)
+### 6.6 Win path — exact order (`win(entry: Vec2)`, rewritten in 1.4)
 
-1. `recorder.pushExact(entry, this.time.now)` — the ink terminates at the true
-   goal-entry point, not at the last sample.
+1. `recorder.pushExact(entry, at)` — the ink terminates at the true
+   goal-entry point, not at the last sample; `at` is the input event's time.
 2. `phase = 'won'`, `activePointer = null`
-3. `elapsed = this.time.now - this.strokeStartedAt`
-4. `Progress.recordWin(this.level.id, this.levelIndex, elapsed, LEVELS.length)`
-   — unlocks `levelIndex + 1` (clamped), keeps best ms, `totalWins++`,
-   `winsSinceAd++` (`Progress.ts:172-189`)
-5. `Progress.addFigure({...})` with points via `pf.toNormalized` and times
-   rebased to `times[0]` — normalized so the same figure redraws at 1080×1080 in
-   a share card
-6. **`this.ink.presentWin(...)` — the figure is on screen**
-7. `Audio.chime()`
-8. `this.clearSkipOffer()`
-9. `readyIn = METRICS.winHoldMs + METRICS.winSettleMs + 250` = `180 + 350 + 250` = **780 ms**;
-   `advanceReadyAt = this.time.now + readyIn`. One number for both the tap gate
-   and the prompt that invites the tap — when they drift, the game says "tap for
-   the next fold" during a window where taps are still dropped.
-10. `refreshHud()`
-11. `showHint('tap for the next fold', readyIn)`
-12. `showShareOffer(readyIn)`
-13. `adWillShow = Ads.wouldShowInterstitial(this.levelIndex, Progress.data.winsSinceAd)`
-    — **non-consuming predicate** (`Ads.ts:175-180`)
-14. `if (Rate.shouldAsk(adWillShow)) this.time.delayedCall(readyIn + 400, () => void Rate.ask())`
-    — at most one interruption per moment; the rating prompt stands down rather
-    than stacking on an ad.
+3. `elapsed = at - this.strokeStartedAt`. On a Daily, `dailyFirstFinish =
+   !Progress.hasDaily(date)` is read BEFORE the ledger records it: only a first
+   finish submits to Game Center, rebuilds the reminders and counts toward
+   `totalWins`/`winsSinceAd`; a replay's share describes the recorded run.
+4. **`before = Progress.snapshotForWin(level.id, levelIndex)`** — everything that is
+   "new" (first clear, a medal already held, the previous best, the streak, whether
+   missions were open) is read before any write, and the streak guard runs first.
+5. `Progress.recordWin(...)`, the medal, Fold Sense, `recordDaily` — as before.
+6. **`outcome = Progress.settleWin(before, facts)`** — missions, chapter marks,
+   streak milestones and bookmarks, in ONE update (not on the web Daily). A win that
+   first opens the Daily also rebuilds the reminders.
+7. `Progress.addFigure({...})` — normalized so the same figure redraws at 1080×1080 in
+   a share card.
+8. **`this.ink.presentWin(...)` — the figure is on screen**, with the accent
+   `creaseSweep` down the axis, and `Audio.celebrate(medal)`.
+9. `readyIn = ms(winHoldMs) + ms(winSettleMs) + ms(250)` ≈ **780 ms**;
+   `advanceReadyAt = this.time.now + readyIn`. One number for the tap gate and the
+   card's buttons going live.
+10. `presentResult(outcome, …)` builds the result card and schedules its timeline
+    (below), and returns `winQuiet`: whether the card asks for something itself.
+    The web Daily keeps its old win screen — share row, verdict, win prompt — and
+    none of this.
+11. `adWillShow = !winQuiet && Ads.wouldShowInterstitial(onboardingIndex, winsSinceAd)`
+    — a **non-consuming predicate** — and `Rate.shouldAsk({ adWillShow, quiet:
+    winQuiet, win })` with the win's facts; at a peak, `Rate.ask()` after
+    `readyIn + 400` if the player is still on this win.
 
-**The interstitial is NOT fired here.** It fires only in `advance()`
-(`:396-414`), i.e. after the player has seen the figure and tapped to leave:
+**The timeline** (`WIN_BEAT`, every time through `ms()`, every timer guarded by the
+level token and the win sequence):
+
+| t (ms) | Event |
+| --- | --- |
+| 0 | the figure, the crease sweep, `Audio.celebrate` |
+| 180–530 | the figure settles (as in 1.3) |
+| 530 | droplets at the goal; `Haptics.land()` (not on a medal); the board steps back to 0.74 about (375, 88) — 0.70 on a Daily, less if a crowded card needs it, never below 0.5; `ui.winFrameScale: 1` turns the move off |
+| 620–940 | the result card rises pt(12) and fades in |
+| 700 | the medal stamp, `Haptics.success()` |
+| ≈780 | the tap gate opens; the card's buttons go live |
+| 940 | the chapter cell fills (a gold flash on 20/20 with `Audio.reward()`); on a Daily the streak number flips with `Audio.streakUp()` |
+| 1200 | reward tokens fly to the Reveal pill (bookmarks to the flame) |
+
+**The card** (`render/ResultCard.ts`; its layout is the pure, tested
+`resultCardLayout`, which keeps its top clear of the scaled board and its bottom above
+the banner). Campaign: the verdict ("Medal · the best line there is", "38% over the
+best line · medal at 25%"), the time ("12.3 s · best 10.8 s", "new best · 9.4 s",
+"replayed · best 10.8 s"), the chapter as a 20-cell bar with +1 / +2 markers, the
+reward lines, and [Share] [Next fold] — a single [Next fold] on levels 1–3, "Finish" on
+300. Crossing 20/20 makes "Chapter 3 complete" the first line. Daily: the flame and
+"7-day streak" (a milestone day leads with its title, "A week of folds"), "Daily #53 ·
+0:48 · 2 retries", the reward lines, and [Leaderboard] [Share] [Done]. One ask at most:
+the soft reminder ask ("Tomorrow's fold lands at midnight." [Remind me]) or the chapter
+doubler ("Watch an ad → +2 more reveals"), never both.
+
+**Taps.** Before the gate, ignored. After it, a tap anywhere but the card's buttons —
+the header band included, bar the back button and the Reveal pill — advances.
+
+**The interstitial is NOT fired here.** It fires only in `advance()`, after the player
+has seen the figure and chosen to leave:
 
 ```ts
 private async advance(): Promise<void> {
   if (this.advancing) return;
+  if (Ads.busy) return;
   this.advancing = true;
-  const next = this.levelIndex + 1;
-  if (Ads.wouldShowInterstitial(this.levelIndex, Progress.data.winsSinceAd)) {
-    const shown = await Ads.showInterstitial();
+  this.resultCard?.setLive(false);          // no Share or [Remind me] under a loading ad
+  if (!this.winQuiet && Ads.wouldShowInterstitial(this.onboardingIndex, Progress.data.winsSinceAd)) {
+    const shown = await Ads.showInterstitial(stillWanted);
     if (shown) Progress.update({ winsSinceAd: 0, attemptsSinceAd: 0 });
   }
-  if (next >= LEVELS.length) { this.scene.start('LevelSelect'); return; }
-  this.loadLevel(next);
+  // … the next level, or LevelSelect past the end
 }
 ```
 
-Two invariants here: the counters are spent **only when an ad actually
-rendered** (no-fill leaves them armed), and `advancing` is a re-entrancy latch
-cleared only by `loadLevel` (`:176`).
+Three invariants here: the counters are spent **only when an ad actually rendered**
+(no-fill leaves them armed), a card that asked something is never followed by an
+interstitial, and `advancing` is a re-entrancy latch cleared only by `loadLevel`.
+`installLevel` clears the card and, in DEV, asserts `ink.frameIsIdentity`: a board left
+framed after Next is a bug.
 
 ### 6.7 Fail path — exact order (`fail(contact: Vec2)`, `:300-327`)
 
@@ -559,7 +628,7 @@ level ready to draw, never into a red flash. `wouldShowOnAttempt` requires
 = 8, session cap of 4, 90 s warm-up, rewarded mute, hard 120 s floor) **and**
 `attemptsSinceAd >= monetization.ads.interstitialEveryNAttempts` (5)
 (`Ads.ts:158-198`). Loosening either
-is the failure mode that gets an AdMob account disabled; `monetization.test.ts:90-100`
+is the failure mode that gets an ad account disabled (AdMob's then, LevelPlay's now); `monetization.test.ts:90-100`
 pins the arithmetic (`interstitialEveryNAttempts * 3s < minSecondsBetweenInterstitials`,
 and `minSecondsBetweenInterstitials / 60 >= 2`).
 
@@ -572,33 +641,48 @@ and `minSecondsBetweenInterstitials / 60 >= 2`).
 Note it does **not** clear the skip offer — the skip pill deliberately survives
 retries and is removed only on win (`:351`) or level load (`:181`).
 
-### 6.9 Reveal, skip, share
+### 6.9 Reveal, rescue, share
 
 | Action | Entry | Flow |
 | --- | --- | --- |
-| Reveal | reveal pill tap → `doReveal()` `:419-437` | no-op while `phase === 'won'`; `Haptics.tap()`; if `Progress.spendReveal()` → `ink.showReveal(this.mirrorBands, monetization.reveals.durationMs /* 6000 */)` + `refreshHud()`; else if `Ads.rewardedAvailable` → `await Ads.showRewarded('reveal')`; on reward `Progress.grantReveals(monetization.reveals.grantedPerRewarded /* 1 */)` + `refreshHud()` — **banked, never auto-spent** |
-| Skip | skip pill → `doSkip()` `:538-548` | `Haptics.tap()` → `await Ads.showRewarded('skip')` → on reward `Progress.unlockThrough(this.levelIndex, LEVELS.length)`, `clearSkipOffer()`, then `loadLevel(next)` or `scene.start('LevelSelect')` |
-| Share | share pill → `shareCurrent()` `:496-516` | uses `Progress.figures[0]` (newest first); `sharing` re-entrancy latch; `renderShareCard(figure, { caption: \`${figure.levelName} · ${(figure.ms/1000).toFixed(1)}s\` })` → `Share.shareFigure({ dataUrl, title: 'My foldwing', text, fileName })` |
+| Reveal | reveal pill tap → `doReveal()` | no-op while `phase === 'won'` or `Ads.busy`; a tap while the bands are still up spends nothing; if `Progress.spendReveal()` → `ink.showReveal(...)` (the accent hatch, six seconds, with a draining underline on the pill); else `showRefillSheet()` — the shared store sheet as "Out of reveals" (`kind: 'refill'`). A reveal earned or bought there while the board is idle on the same level is **used at once**: it flies to the pill, the walls show, "+1 reveal · showing the folded walls". A late Ask to Buy pack that lands there is used the same way. A `null` sheet (no store at all) falls back to the hint "out of reveals — one more lands tomorrow" |
+| Rescue | the ladder in `core/Rescue.ts`, after every death | at 3 deaths the reveal offer ("Show the folded walls · 1 of 7", "Show the folded walls" for an owner, "Watch an ad → see the folded walls", "See the folded walls?" to the refill sheet); at 6 the skip ("Watch an ad → skip this fold", or "Skip this fold" free) — unless the player could still look and has not on this level, when the reveal offer stays until 9. Never a skip on a Daily. See [10-monetization.md](10-monetization.md) §5.4 |
+| Skip | skip pill → `doSkip()` | the pill keeps the promise it was drawn with (`Rescue.skipDrawnFree`): "Skip this fold" never plays an ad, and Remove Ads bought mid-level redraws an ad pill as free. `Ads.showRewarded('skip', stillWanted)`: `'declined'` / `'abandoned'` skip nothing; `'unavailable'` skips anyway; `'earned'` unlocks the level it was requested for even if the player has left. Then `loadLevel(next)` or `scene.start('LevelSelect')` |
+| Share | the card's [Share] → `pressShare()` | the two-option chooser ("Share the replay" where WebCodecs can encode, "Share this fold") or straight to the figure; `Share.shareFigure({ dataUrl, title: 'My foldwing', text, fileName })` |
 
-Both pills are placed at `BASE_HEIGHT - METRICS.bannerReserve - pt(34)`
-(`:463`, `:519`) — the same slot, which is safe because the skip pill is cleared
-before the share pill appears.
+The rescue pills are placed by `Rescue.rescueSpot`: in the band between the start dot's
+**grab zone** and the banner line, never over the board or the first stretch of the
+last attempt's ghost — 1.3 put them in the runway above the dot, exactly where the ghost
+leaves it — and never inside the grab zone, where a press starts a stroke instead of
+answering the pill. They are hidden and disabled while a stroke is live, and re-laid
+out on every resize.
 
-**The share pill has to carve itself out of the "tap anywhere = next" rule**
-(`:191-197`, `overSharePill` `:483-494`), otherwise reaching for it would skip
-past the figure. `overSharePill` reads `pill.width`/`pill.height`, which are real
-because `UI.button` calls `container.setSize(w, h)` (`UI.ts:242`), and ignores
-the pill while `pill.alpha < 0.5`.
+**Failure that teaches.** A death draws a contact ring where the line died (at the
+reflected point for a mirror death) and flashes the wall that did it; the ghost of the
+last attempt is stronger (alpha 0.26) with an × at the death — two, for a mirror death.
+The first mirror death ever also says "your reflection hit that wall", flashes it twice
+and leaves the reflected stroke at ghost strength (`Progress.teach('mirror')`). A
+near-miss line ("attempt 4 · furthest yet 74%") appears only on a new best of 20% or
+more, from `core/RouteProgress.ts`'s distance field. Level 1 shows a ghost hand drawing
+the first pt(90) of the proved route and its mirror until the first press. No screen
+shake.
 
 ### 6.10 HUD (`buildHud` `:552-602`, `buildRevealPill` `:605-663`, `refreshHud` `:665-672`)
 
 | Object | Position | Depth | Content |
 | --- | --- | --- | --- |
-| back `‹` button | `(METRICS.inset.left + pt(18), pt(26))`, `pt(46)×pt(44)`, ghost | 50 | `Haptics.tap()` → `void Progress.flush()` → `scene.start('Menu')` |
+| back `‹` button | `(METRICS.inset.left + pt(18), pt(26))` + `layoutHud`'s shift, ghost | 50 | `Haptics.tap()` → `void Progress.flush()` → `scene.start('Menu')` |
 | `titleText` | `(BASE_WIDTH/2, pt(26))`, `FONT.display`, `TYPE.body` | 50 | `` `${this.levelIndex + 1}. ${this.level.name}` `` |
-| `revealPill` | `(BASE_WIDTH - METRICS.inset.right - pt(42), pt(26))`, `pt(74)×pt(34)` | 50 | eye glyph + count; alpha `1` when `n > 0 \|\| Ads.rewardedAvailable`, else `0.35` |
-| `attemptText` | `(BASE_WIDTH/2, pt(47))`, `FONT.ui`, `TYPE.micro` | 50 | `` `attempt ${this.attempts}` `` when `attempts > 0`, else `''` |
+| `revealPill` | `(BASE_WIDTH - METRICS.inset.right - pt(42), pt(26))`, `pt(74)×pt(34)` | 50 | eye glyph + count: ≥ 3 plain; 1–2 in accent (not red); 0 — an accent "+" disc replaces the count, full opacity, and a tap opens the refill sheet, wherever something can refill it (else faded to 0.35); ∞ for an owner. The count counts up whenever the balance changes on screen |
+| `attemptText` | `(BASE_WIDTH/2, pt(47))`, `FONT.ui`, `TYPE.micro`, ink 0.8 | 50 | `` `attempt ${this.attempts}` `` when `attempts > 0`, else `''`; the near-miss line takes it after a death |
 | `hintText` | `(BASE_WIDTH/2, BASE_HEIGHT - METRICS.bannerReserve - pt(4))`, origin `(0.5, 1)`, alpha 0 | 50 | set by `showHint()` |
+
+`layoutHud()` re-runs on every `Scale.Events.RESIZE` and level install. It
+moves the header row down by whatever safe-area inset the canvas does not
+already clear (`SafeArea.canvasInsets`) — which is 0 on every device now that
+index.html fits the canvas into the safe area, so the row stays at its designed
+place; the code remains as the guard. The HUD also repaints on every return to
+the foreground, so a daily reveal topped up by main.ts shows at once.
 
 `revealCount` prints `'∞'` when `Progress.reveals === Number.POSITIVE_INFINITY`
 — which is what owning Remove Ads produces (`Progress.ts:220-224`).
@@ -606,7 +690,9 @@ the pill while `pill.alpha < 0.5`.
 The reveal pill re-implements `UI.button`'s gesture rule rather than using it
 (`:637-661`): arm on the container's `pointerdown`, resolve on the **scene's**
 `POINTER_UP`, reject on `Phaser.Math.Distance.Between(...) > TAP_SLOP`
-(`TAP_SLOP = pt(14)`, `UI.ts:79`), then a manual bounds test. Judging by
+(`TAP_SLOP = pt(14)`), then a manual bounds test against the 44pt tap
+height. A touch the system cancelled (`pointer.wasCanceled` — a fold or
+rotation under the finger) is not a tap, here and in `UI.button`. Judging by
 distance rather than by `pointerout` is why buttons in this game stopped needing
 two or three stabs. Its listener is unbound on container `destroy` (`:660`).
 
@@ -634,21 +720,25 @@ bound (100) is never actually reached; keys `1`–`9` are the practical range.
 | System call | Where | When, relative to visuals |
 | --- | --- | --- |
 | `Ads.showBanner()` | `:139` | end of `create()`, after the board exists |
-| `Ads.rewardedAvailable` | `:323`, `:429`, `:671` | gates the skip offer, the reveal upsell, the pill's dim state |
-| `Ads.wouldShowInterstitial` | `:368` (predicate only), `:402` | asked in `win()` **only** to silence `Rate`; acted on in `advance()` |
-| `Ads.showInterstitial()` | `:403`, `:448` | after the win figure is dismissed; after the fail flash + reset |
-| `Ads.showRewarded('reveal' \| 'skip')` | `:430`, `:540` | opt-in only |
-| `Progress.recordWin` / `addFigure` | `:335`, `:340` | before `presentWin` — the save is written first, the reward is drawn second |
+| `Ads.rewardedAvailable` | — | at draw time: whether the skip is drawn free, whether the three-death offer and the doubler are drawn at all |
+| `Ads.wouldShowInterstitial` | — | asked in `win()` **only** to silence `Rate`; acted on in `advance()` unless the card was quiet |
+| `Ads.showInterstitial(stillWanted)` | — | after the win is dismissed; after the fail flash + reset (not while a rescue pill is up) |
+| `Ads.showRewarded('reveal-offer' \| 'skip' \| 'chapter-double')` | — | opt-in only; the store sheet's `'reveal'` and the Streak sheet's `'repair'` are the other two placements |
+| `Progress.snapshotForWin` / `recordWin` / `settleWin` / `addFigure` | — | before `presentWin` — the save is written first, the reward is drawn second |
+| `Progress.canAdPay` / `payAdReveals` | — | the three-death offer (1) and the doubler (2) — the daily ad cap |
+| `Progress.onGrant` | `create()`, unsubscribed on SHUTDOWN | presents only the day's free reveal landing mid-level and a late purchase |
 | `Progress.update(attemptsSinceAd+1)` | `:309` | inside `fail()`, before the timer is armed |
 | `Progress.flush()` | `:564` | back button, before leaving to Menu |
 | `Audio.unlock()` | `:189` | first line of every `pointerdown` (browser autoplay gate) |
 | `Audio.resetScale()` | `:177`, `:222` | on level load and on every new stroke |
 | `Audio.note()` / `Haptics.tick()` | `:272-273` | per gate crossed, mid-stroke |
 | `Haptics.thud()` / `Audio.thud()` | `:305-306` | `fail()`, before the flash is drawn |
-| `Audio.chime()` | `:350` | immediately after `presentWin` |
-| `Haptics.tap()` | `:420`, `:500`, `:539`, `:563` | reveal, share, skip, back |
-| `Rate.shouldAsk` / `Rate.ask` | `:372-373` | `readyIn + 400` = 1180 ms after the win, and only when no ad is queued |
-| `Share.shareFigure` | `:507` | user-initiated only |
+| `Audio.celebrate(medal)` | — | immediately after `presentWin` |
+| `Haptics.land()` / `success()` | — | 530 ms (the figure settled) / the medal stamp, a chapter complete, the streak flip |
+| `Haptics.tap()` | — | reveal, share, skip, back |
+| `Rate.shouldAsk` / `Rate.ask` | — | `readyIn + 400` ≈ 1180 ms after the win, only at a peak, and only when no ad is queued and the card asked nothing |
+| `Nudges.permission` / `request` / `rebuild` | — | the soft ask on the card ([Remind me]); `rebuild` on a first Daily finish and on the win that first opens the Daily |
+| `Share.shareFigure` | — | user-initiated only |
 
 ---
 
@@ -690,9 +780,9 @@ never stacks two atlases.
    `cameras.main.ignore(...)` or it renders twice
    (`LevelSelectScene.ts:136-143`, `GalleryScene.ts:137-138`).
 8. **`bannerReserve` is not decoration.** The banner is a native view over the
-   canvas; on 9:16 there is no letterbox, so anything drawn in the last
-   `pt(58)` is visible-but-untappable (`Theme.ts:186-195`,
-   `LevelSelectScene.ts:69-73`).
+   canvas, pinned to the safe-area bottom; anything drawn in the last `pt(58)`
+   can be under it. It covers the banner only while the canvas scale is 0.43 or
+   more; below that main.ts lifts the canvas (`--fw-banner-lift`).
 9. **GameScene mutates in place across levels.** New per-level state must be
    reset in `loadLevel()`; there is no scene restart to do it for you.
 10. **`enter()` mutates `y` and `alpha` of its targets** and tweens them back
@@ -703,22 +793,13 @@ never stacks two atlases.
 
 ## 9. Defects and inconsistencies noticed while reading
 
-- **Share-pill blind spot.** `advanceReadyAt` is `now + readyIn` (`:360`) but the
-  pill's fade is `{ delay: readyIn, duration: 300 }` (`:473`), and
-  `overSharePill` ignores the pill while `alpha < 0.5` (`:485`). So for roughly
-  150 ms after the tap gate opens the pill is drawn (fading up from 0) yet the
-  carve-out does not see it: a tap on it falls through to `advance()` and skips
-  the figure, which is exactly what `overSharePill` exists to prevent. Whether
-  `onPress` → `shareCurrent()` *also* fires depends on the ad path — with no
-  interstitial queued, `advance()` runs to `loadLevel` synchronously and
-  `clearShareOffer()` destroys the pill (unbinding its scene `POINTER_UP`)
-  before the release, so only the advance happens.
-- **HUD text colours are hardcoded, not themed.** `buildHud` takes
-  `const t = theme()` (`:553`) and then discards it with `void t;` (`:601`);
-  the three Text objects use literal `rgba(22,50,60,…)` strings (`:575`, `:586`,
-  `:595`). That literal equals `PAPER.ink` (`0x16323c`), so any second ink pack
-  added to `THEMES` would leave the HUD mis-coloured, and `Theme.rgba()`
-  (`Theme.ts:104`) already exists for this.
+- *(Gone in 1.4.)* **Share-pill blind spot** — for about 150 ms after the tap gate
+  opened, the fading share pill was drawn but not carved out of "tap anywhere =
+  next". The campaign and app Daily share from the result card now, whose buttons go
+  live with the gate; only the web Daily keeps the old pill.
+- *(Fixed in 1.4.)* **HUD text colours were hardcoded** `rgba(22,50,60,…)` literals.
+  They are `inkCss(alpha)` from the theme now, at the contrast floor (body ≥ 0.75,
+  micro ≥ 0.8), and the gold is the theme's `medal` / `medalText`.
 - **`this.attempts` counts abandoned strokes.** It is incremented at
   `pointerdown` (`:216`), so lifting off before the goal still advances the skip
   offer's counter (`:321`), while `attemptsSinceAd` — incremented only in
@@ -728,18 +809,18 @@ never stacks two atlases.
   (`:564` vs `:704`).
 - **Dead range check** in `bindDevKeys`: `n <= LEVELS.length` (100) can never be
   exceeded by a single `event.key` character.
-- **`LIVE_ANDROID` unit ids are empty strings** (`config/monetization.ts:83-88`),
-  so with `useTestAds: false` every ad path no-ops on Android via
-  `adsConfigured()` (`:182`). Intentional, but it means all GameScene ad
-  branches are dead on Android in the current release configuration.
-- `MenuScene` computes `figureCount` (`:105`) before the Gallery button but uses
-  it only inside `buildRevealChip`, which is skipped entirely when `selling` is
-  true — so owners-to-be see neither their reveal count nor their figure count.
-- No test file covers any scene: the suite is `src/config/monetization.test.ts`,
-  `src/core/*.test.ts`, `src/data/levels.test.ts`, `src/data/quality.test.ts`,
-  `src/render/HitArea.test.ts`, `src/render/Theme.test.ts`. Scene behaviour is
-  pinned only indirectly — via the metrics in `Theme.test.ts` and the ad
-  arithmetic in `monetization.test.ts`.
+- **There is no LevelPlay Android app**, so the Android app key and unit ids are
+  empty strings (`systems/providers/levelplay.ts`) and every ad path no-ops on
+  Android. Intentional, but it means all GameScene ad branches are dead on
+  Android in the current release configuration.
+- *(Gone in 1.4.)* The 1.3 menu hid the reveal count from every player it was
+  selling to (`selling` gave the chip's slot to the purchase rows). The balance chip
+  is always on the top bar now, for everyone past the tutorial.
+- Only two scenes have a test file, and those cover pure helpers
+  (`LevelSelectScene.chapterMarker`, `GalleryScene.figureCaption`). The scenes
+  themselves are pinned indirectly — through the pure layouts and models they call
+  (`MenuLayout`, `DailyCard`, `ResultCard`, `Rescue`, `StoreSheet`) — and exercised in
+  a browser by the harness described in [12-testing.md](12-testing.md) §8.
 
 ---
 

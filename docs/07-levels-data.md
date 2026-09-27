@@ -3,11 +3,13 @@
 >
 > This page describes the retired **100-level set of bar obstacles** and the
 > generator that produced it. Neither still exists. The game now ships 300
-> levels — five hand-authored and 295 spanning-tree mazes built by
-> `src/core/MazeGen.ts`, which is also what the Daily Fold runs on the phone —
-> so every level count below is wrong, and any passage about wall placement,
-> interlock reservation or inert-wall stripping describes code that was
-> deleted with the bar set.
+> spanning-tree mazes built by `src/core/MazeGen.ts`, which is also what the
+> Daily Fold runs on the phone — so every level count below is wrong, and any
+> passage about wall placement, interlock reservation or inert-wall stripping
+> describes code that was deleted with the bar set. The tutorial went too: the
+> five hand-authored bar levels, LOCKED wherever they appear below, were
+> replaced in September 2026 by five small mazes from
+> `scripts/genTutorialMazes.ts`, and save schema 3 forgets clears of the old ones.
 >
 > The "Source files" line-count tables are wrong too, and that matters more
 > than it looks: the `file:line` citations throughout were counted against
@@ -35,7 +37,7 @@ and gate the set. Ends with a full invariant → test index.
 | Path | Lines | Role |
 | --- | --- | --- |
 | `src/data/types.ts` | 34 | `Level` interface + the LOCKED coordinate-system contract |
-| `src/data/levels.ts` | 95 | `TUTORIAL_LEVELS` (5, hand-authored), `LEVELS`, `levelAt()` |
+| `src/data/levels.ts` | — | `TUTORIAL_LEVELS` (5, hand-authored), `LEVELS`, `levelAt()` — today `TUTORIAL_LEVELS` is re-exported from `src/data/tutorialLevels.ts`, five generated mazes (§3). Since 1.4 also `CHAPTER_SIZE = 20`, the one definition Levels, the win card's chapter bar and `core/Rewards.ts` (fifteen chapters, their marks) share |
 | `src/data/generatedLevels.ts` | 1751 | `GENERATED_LEVELS` — 95 levels, GENERATED OUTPUT, never hand-edit |
 | `src/core/LevelValidator.ts` | 337 | `validateLevel`, `clearance`, `interlock`, `interlockBands`, `difficulty`, `pressure`, `PLAYABLE_CLEARANCE` |
 | `src/core/Playfield.ts` | 87 | normalized ↔ pixels; supplies `axisX` to the validator |
@@ -70,7 +72,7 @@ export interface Level {
 
 | Field | Space | Units | Range in shipped data | Notes |
 | --- | --- | --- | --- | --- |
-| `id` | — | string | `l1`…`l100` | unique; `l1`–`l5` tutorial, `l6`–`l100` generated. Used as the Progress key (`GameScene.ts:335`) |
+| `id` | — | string | `l1`…`l100` (today `l1`…`l300`) | unique; `l1`–`l5` tutorial, the rest generated. Used as the Progress key (`GameScene.ts:335`), so today every id must equal its position (`l${i + 1}`, pinned) and giving an id new content needs a save-schema bump — schema 3 did it for `l1`–`l5` |
 | `name` | — | string | non-empty, unique | shown as `${index+1}. ${name}` (`GameScene.ts:666`) |
 | `start` | full playfield | normalized, y down | x ∈ [0.071, 0.148], y ∈ [0.88, 0.92] | must satisfy x < 0.5 |
 | `goal` | full playfield | normalized, y down | x ∈ [0.07, 0.4], y ∈ [0.07, 0.12] | reached when the stroke comes within `METRICS.goalRadius` px (`GameScene.ts:243`) |
@@ -143,7 +145,72 @@ reuses the same object (`LevelValidator.ts:62`).
 
 ## 3. The shipped ladder
 
-### `TUTORIAL_LEVELS` — 5 hand-authored, LOCKED
+### `TUTORIAL_LEVELS` — 5 hand-authored, LOCKED (retired)
+
+> **Replaced in September 2026.** The table below is the bar tutorial, kept for
+> its teaching arc, which the replacement follows. Every other `l1`–`l5` figure
+> on this page (§4.3, §6, §7) is the bar tutorial's too.
+>
+> `TUTORIAL_LEVELS` is now five small mazes in `src/data/tutorialLevels.ts`,
+> GENERATED — never hand-edit; regenerate with
+> `npx vite-node scripts/genTutorialMazes.ts` from the repo root (several
+> minutes; a rerun reproduces the file byte for byte). The script drives
+> `MazeGen`'s `carveMaze` → fold decisions → `emitMaze` stages itself. Where the
+> ladder folds walls at random, a tutorial maze folds only walls *chosen* to
+> teach its one thing, and `scripts/tutorialLessons.ts` keeps it only when two
+> things hold on the **shortest line a hand can draw** — a visibility graph whose
+> every leg `CollisionSystem` allows, cross-checked on the validator's own grid
+> weighted by length — at both `hitRadius` (5.2) and `hitRadius +
+> PLAYABLE_CLEARANCE` (11.2):
+>
+> - **it is a maze** (`MAZE_RULES`): the line makes ≥ 2 real turns, changes
+>   column ≥ 2 times, spends ≥ 25% of its in-maze length in the middle column
+>   and has no straight leg over 45% of it; `validateLevel`'s own path hugs the
+>   undrawn left edge for ≤ 25% of its length; the near half has no straight
+>   lane up that edge, no empty band taller than a row, and ≥ 60% of its drawn
+>   wall length joined into L/T/U shapes; every folded wall lengthens the line
+>   by ≥ 3% on its own.
+> - **it teaches** (`LESSONS`): the folds lengthen the line by ≥ 10 / 8 / 8 /
+>   10 / 12% (l1…l5) on both rulers at both radii, and the lesson shows in the
+>   route — l1 one folded wall that the real line turns at; l2 three turns in a
+>   row alternating between a drawn wall and a reflection; l3 a gap bounded by a
+>   drawn wall and a reflection that the near half shows ≥ 1.8× as wide; l4 the
+>   near half's best line a whole column (117 px) away from the real one; l5 two
+>   or more folds, that separation, and a zigzag or a gate.
+>
+> The ruler is not `routeArc`: the validator's BFS minimises *steps*, so a
+> sideways detour is free and its arc swings with neighbour order — it scored
+> the replaced l4's fold at 0% where the drawn line is 13% longer. The five are
+> picked so `difficulty()` rises strictly and stays below level 6 (maximising
+> the smallest step), the line's winding rises at both radii, and every one is
+> proved playable, with `parPx` (the validator's route, as for every level)
+> written into the file. Measured on the shipped file:
+>
+> | id | name | maze | walls (far half) | `interlock` | `difficulty` | `parPx` | winding (drawn line) | fold cost at 5.2 / 11.2 px | Teaches |
+> | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+> | `l1` | First reflection | 3×5 | 8 (1) | 0.020 | 0.120 | 1209 | 1.129 | 11.8% / 13.1% | one folded wall, and it is the lie: the near half's best line runs straight up through it; the real one turns at it and detours through the axis column |
+> | `l2` | Zigzag | 3×5 | 8 (1) | 0.025 | 0.131 | 1279 | 1.156 | 15.6% / 18.7% | three turns in a row alternate between a drawn wall and a reflection |
+> | `l3` | Gate | 3×5 | 9 (1) | 0.047 | 0.137 | 1317 | 1.161 | 11.3% / 13.1% | the line threads a gap bounded by a drawn wall and a reflection, which the near half shows at least 1.8× as wide |
+> | `l4` | Sacrifice | 3×5 | 9 (1) | 0.047 | 0.140 | 1300 | 1.170 | 17.0% / 19.8% | the way the near half offers is 191 px — more than a column — from the way that works |
+> | `l5` | Tangle | 3×5 | 8 (2) | 0.022 | 0.143 | 1365 | 1.255 | 24.3% / 28.1% | two folded walls, a 161 px sacrifice and a zigzag at once |
+>
+> On the validator's grid the same fold costs read 12.0/13.3, 21.8/26.4,
+> 12.9/15.0, 21.9/25.4 and 23.7/27.5%. The tutorial these replaced, measured the
+> same way, had fold costs of 0, 4.3, 9.8, 13.2 and 5.1% at 5.2 px, an open lane
+> up the left edge in all five, l1 a straight line (0 turns, winding 1.002) and
+> l2 only 39% of its walls joined. Level 6 measures 0.148. All five are 3×5,
+> like level 6, and saturate `clearance` at 34. None has zero interlock, so the
+> zero-interlock rule below went with its test. The tutorial is still exempt
+> from the generated interlock floor and from `quality.test.ts`'s winding/decoy
+> check (by the validator's route l1 winds 1.29, under that floor; l2–l5 wind
+> 1.36–1.46), and instead has to rise *strictly* into level 6
+> (`never steps backwards, from level 1 to level 300`). Pins: `keeps the
+> tutorial mazes exactly as generated` (the `l1` literal and the five names) and
+> `the tutorial is a labyrinth that teaches` (every rule above re-measured on
+> the shipped file, the two rulers checked against each other and against
+> `validateLevel`, winding rising, and a guard that the rules refuse the `l1`
+> they replaced). Save schema 3 forgets `cleared` / `bestMs` / `medals` for
+> `l1`–`l5` and nothing else — see [09-systems.md](09-systems.md) §1.5.
 
 `src/data/levels.ts:21-83`. The header comment (`levels.ts:4-16`) states the teaching arc;
 measured values below come from running the shipped metrics against the shipped playfield.
@@ -529,6 +596,10 @@ Harness: `pf = new Playfield(BASE_WIDTH, BASE_HEIGHT, METRICS.inset)` (`:17`),
 | **`l1` numbers LOCKED** | deep equality against the literal | `levels.test.ts:40-49` |
 | `l4` is still "Sacrifice" | `TUTORIAL_LEVELS[3].name === 'Sacrifice'` | `levels.test.ts:50` |
 | `l5` still has 7 walls | `TUTORIAL_LEVELS[4].walls.length === 7` | `levels.test.ts:51` |
+| *today, replacing the three above:* tutorial mazes exactly as generated | `TUTORIAL_LEVELS[0]` deep-equals the maze literal; names are `First reflection`, `Zigzag`, `Gate`, `Sacrifice`, `Tangle` | `keeps the tutorial mazes exactly as generated` |
+| *today:* ids are positions | `LEVELS[i].id === 'l' + (i + 1)` — the save keys clears by id and unlocks by index | `keys every level by its position, because the save stores ids` |
+| *today:* levels 6–300 unchanged | sha256 of `GENERATED_LEVELS`, and `LEVELS.slice(5)[i] === GENERATED_LEVELS[i]` | `keeps levels 6 to 300 byte-identical to the shipped set` |
+| *today:* Daily Folds unchanged | sha256 of 60 consecutive `dailyLevel()` results from 2026-09-01 | `keeps every Daily Fold identical to the one players already had` |
 | **start on drawable half** | `l.start.x < 0.5` | `levels.test.ts:59` |
 | **goal on drawable half** | `l.goal.x < 0.5` | `levels.test.ts:60` |
 | start/goal in bounds | `p.x >= 0`, `p.y >= 0`, `p.y <= 1` | `levels.test.ts:67-69` |
@@ -543,11 +614,11 @@ Harness: `pf = new Playfield(BASE_WIDTH, BASE_HEIGHT, METRICS.inset)` (`:17`),
 | tightest level ≥ the floor | `min(clearance) >= PLAYABLE_CLEARANCE` | `levels.test.ts:159` |
 | hard end has not gone soft | `min(clearance) < PLAYABLE_CLEARANCE * 3` | `levels.test.ts:162` |
 | every generated level interlocks | `interlock(l) > 0.05` | `levels.test.ts:185` |
-| tutorial teaches one half at a time | `interlock(l1..l4) === 0` | `levels.test.ts:191` |
-| `l5` is the turn | `interlock(l5) > 0.1` | `levels.test.ts:193` |
+| tutorial teaches one half at a time | `interlock(l1..l4) === 0` | `levels.test.ts:191` — *removed September 2026; the tutorial mazes all interlock (0.020–0.047)* |
+| `l5` is the turn | `interlock(l5) > 0.1` | `levels.test.ts:193` — *removed with it* |
 | interlock is substantial, not marginal | mean over generated `> 0.2` | `levels.test.ts:199` |
 | pressure rises across the set | `lastTen > firstTen * 1.8` | `levels.test.ts:209` |
-| **generated set is monotone in `difficulty`** | `d[i] >= d[i-1] - 1e-9` | `levels.test.ts:222-228` |
+| **generated set is monotone in `difficulty`** | `d[i] >= d[i-1] - 1e-9` | `levels.test.ts:222-228` — *today over all 300, strictly (`d[i] >= d[i-1] + 1e-9`) for `l2`–`l6`: `never steps backwards, from level 1 to level 300`* |
 | precision demand ramps | mean `clearance` of last 20 `< 0.6 ×` first 20 | `levels.test.ts:237-239` |
 | mirror demand ramps | mean `interlockBands` of last 20 `> 1.4 ×` first 20 | `levels.test.ts:241-243` |
 | no difficulty cliff | each 10-level band's mean clearance `> 0.55 ×` the previous band's | `levels.test.ts:246-256` |

@@ -3,11 +3,13 @@
 >
 > This page describes the retired **100-level set of bar obstacles** and the
 > generator that produced it. Neither still exists. The game now ships 300
-> levels — five hand-authored and 295 spanning-tree mazes built by
-> `src/core/MazeGen.ts`, which is also what the Daily Fold runs on the phone —
-> so every level count below is wrong, and any passage about wall placement,
-> interlock reservation or inert-wall stripping describes code that was
-> deleted with the bar set.
+> spanning-tree mazes built by `src/core/MazeGen.ts`, which is also what the
+> Daily Fold runs on the phone — so every level count below is wrong, and any
+> passage about wall placement, interlock reservation or inert-wall stripping
+> describes code that was deleted with the bar set. The tutorial went too: the
+> five hand-authored bar levels, LOCKED wherever they appear below, were
+> replaced in September 2026 by five small mazes from
+> `scripts/genTutorialMazes.ts`, and save schema 3 forgets clears of the old ones.
 >
 > The "Source files" line-count tables are wrong too, and that matters more
 > than it looks: the `file:line` citations throughout were counted against
@@ -314,10 +316,20 @@ export class CollisionSystem {                                          // Colli
   ) {}                                                                  // :30-34
 
   blocks(a: Vec2, b: Vec2): boolean                                     // :37
-  firstHitT(a: Vec2, b: Vec2): number | null                            // :55
+  firstHitT(a: Vec2, b: Vec2): number | null                            // :55 — now firstHit(a, b)?.t
+  firstHit(a: Vec2, b: Vec2): Hit | null                                // which side died, and on which wall
   private sideBlocked(a: Vec2, b: Vec2): boolean                        // :74
 }
+
+export interface Hit { t: number; mirror: boolean; wall: number }      // wall: index into the constructor's rects
 ```
+
+`firstHit` (1.4) is `firstHitT` plus two facts the renderer needed for failure that
+teaches: whether the reflection died rather than the stroke, and **which wall** — for a
+mirror death, the real wall on the far half — so the wall that killed the line can
+flash. On a tie the first-listed wall wins, own walls before mirrored ones. No
+behaviour changed: `CollisionSystem.test.ts` compares `{t, mirror}` against a verbatim
+copy of the pre-change loop over 7 500 segments on five real levels.
 
 Constructor params (`CollisionSystem.ts:25-29`):
 
@@ -492,7 +504,11 @@ return { x: raw.x, y: raw.y - opts.offsetY * ramp };
 | lift ≤ `min(travelPx*2, offsetY)` | — | `:110-117` |
 
 Runtime values: `offsetY = METRICS.touchOffsetY = pt(42) = 84`,
-`rampPx = METRICS.touchOffsetRampPx = pt(21) = 42` (`Theme.ts:134,144`).
+`rampPx = METRICS.touchOffsetRampPx = pt(21) = 42` (`Theme.ts:134,144`) — as floors
+since 1.4: `GameScene.cursorFor` passes `max(touchOffsetY, 42 × displayScale.y)` and
+`max(touchOffsetRampPx, 60 × displayScale.y)`, so the lift is 42 points of glass at
+any canvas scale (an iPhone Duo Split View pane at 0.317 gave only 27). `hitRadius` is
+untouched.
 `DrawCursor.test.ts:100-108` pins the shipped lift at exactly `pt(42)`.
 Because `rampPx = offsetY / 2`, the cursor moves at **twice finger speed** during
 the ramp (`Theme.ts:136-143`).

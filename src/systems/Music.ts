@@ -22,7 +22,8 @@
  *
  * IT IS DELIBERATELY QUIET AND SLOW. A bed you notice is a bed you turn off.
  */
-import { Audio } from './Audio';
+import { Audio, MUSIC_LEVEL } from './Audio';
+import { gameLoopPaused } from './gameLoop';
 
 /** Same set and root as the gameplay voice — see Audio. */
 const PENTATONIC = [0, 2, 4, 7, 9];
@@ -143,12 +144,50 @@ export function scheduleBar(
 const LOOKAHEAD_SECONDS = BAR_SECONDS * 2;
 const TICK_MS = 1000;
 
+/**
+ * How long `stop` takes to bring what is already booked down to silence.
+ *
+ * Short, because the lookahead is not: two bars ahead at nine and a half
+ * seconds each is up to twenty-four seconds of bed that "stop scheduling" alone
+ * would leave playing — under a full-screen ad, chords that had not even begun
+ * yet swelled in over it. Long enough not to click.
+ */
+const STOP_FADE_SECONDS = 0.3;
+
+/*
+ * THE DUCK. While the pen is down the bed steps back — the music bus from
+ * 0.14 to half that over 150 ms — so the pen on the paper and the phrase of
+ * row notes come forward: for those seconds they are the music. It comes back
+ * only after 600 ms of the pen being up, because a death and the retry that
+ * follows it are one breath, and a bed that surged up and down between every
+ * attempt would pump like a compressor.
+ *
+ * The bus, not this service's own bed node: `stop` fades the bed node to
+ * silence and a start makes a fresh one, and a duck on it would be lost to
+ * either. The bus outlives both.
+ */
+export const DUCK_LEVEL = MUSIC_LEVEL / 2;
+export const DUCK_DOWN_SECONDS = 0.15;
+export const DUCK_HOLD_MS = 600;
+/** The return is slower than the dip: a swell back, not a jump. */
+export const DUCK_UP_SECONDS = 0.4;
+
 class MusicService {
   private enabled = false;
   private timer: number | null = null;
   private nextBar = 0;
   private nextAt = 0;
   private watching = false;
+  /**
+   * The node every booked bar plays through: made fresh by the first tick after
+   * a start, faded out and dropped by stop. Owning it is what makes a stop
+   * cancel bars that were booked seconds ahead — and what keeps a restart from
+   * booking a second bed on top of one that is still waiting to play.
+   */
+  private bed: { ctx: BaseAudioContext; gain: GainNode } | null = null;
+  /** Whether the bus is down (or on its way down) for a stroke. */
+  private ducked = false;
+  private duckReturn: ReturnType<typeof setTimeout> | null = null;
 
   setEnabled(v: boolean): void {
     if (this.enabled === v) return;
@@ -204,6 +243,14 @@ class MusicService {
   start(): void {
     this.watchVisibility();
     if (!this.enabled || this.timer !== null) return;
+    /*
+     * Never under a full-screen ad. The ad layer pauses the game loop for
+     * exactly as long as one owns the screen, and the bed is part of the game.
+     * A trip to the background and back while the ad was still up used to
+     * restart it here, from the visibility handler, under the ad; the ad
+     * layer's own start, once the ad is gone, is the one that counts.
+     */
+    if (gameLoopPaused()) return;
     this.timer = window.setInterval(() => this.tick(), TICK_MS);
     this.tick();
   }
@@ -213,9 +260,82 @@ class MusicService {
       clearInterval(this.timer);
       this.timer = null;
     }
-    // Nothing is cancelled: bars already booked are at most a few seconds of
-    // tail, and letting them ring out is how the bed fades instead of clipping.
     this.nextAt = 0;
+    // What is already booked goes too, on a short fade rather than a cut — see
+    // STOP_FADE_SECONDS. The next start books onto a fresh node.
+    const bed = this.bed;
+    this.bed = null;
+    if (!bed) return;
+    try {
+      const now = bed.ctx.currentTime;
+      const level = bed.gain.gain;
+      level.cancelScheduledValues(now);
+      level.setValueAtTime(level.value, now);
+      level.linearRampToValueAtTime(0, now + STOP_FADE_SECONDS);
+    } catch {
+      /* a closed context has nothing left to fade */
+    }
+    // Wall time, not audio time: a suspended context never reaches the end of
+    // its ramp, and the node has to go either way.
+    setTimeout(() => {
+      try {
+        bed.gain.disconnect();
+      } catch {
+        /* already gone */
+      }
+    }, STOP_FADE_SECONDS * 1000 + 100);
+  }
+
+  /**
+   * The pen is down (`true`) or up (`false`) — see THE DUCK.
+   *
+   * Down only when there is something to make room for: with the Sound switch
+   * off there is no pen and no phrase, and a bed that dipped for nothing would
+   * sound like a fault. Up always comes back, whatever the switches did in
+   * between, so the bus can never be left at half.
+   */
+  duck(on: boolean): void {
+    if (this.duckReturn !== null) {
+      clearTimeout(this.duckReturn);
+      this.duckReturn = null;
+    }
+    if (on) {
+      if (!Audio.isEnabled) return;
+      this.ducked = true;
+      this.rampBus(DUCK_LEVEL, DUCK_DOWN_SECONDS);
+      return;
+    }
+    if (!this.ducked) return;
+    this.duckReturn = setTimeout(() => {
+      this.duckReturn = null;
+      this.ducked = false;
+      this.rampBus(MUSIC_LEVEL, DUCK_UP_SECONDS);
+    }, DUCK_HOLD_MS);
+  }
+
+  /** Glide the music bus to `level` from wherever it is now. */
+  private rampBus(level: number, seconds: number): void {
+    const bus = Audio.musicBus();
+    if (!bus) return;
+    try {
+      const now = bus.ctx.currentTime;
+      const g = bus.out.gain;
+      g.cancelScheduledValues(now);
+      g.setValueAtTime(g.value, now);
+      g.linearRampToValueAtTime(level, now + seconds);
+    } catch {
+      /* a closed context has no bus to move */
+    }
+  }
+
+  /** The node this run's bars play through, made on first use. */
+  private bedFor(ctx: BaseAudioContext, out: AudioNode): GainNode {
+    if (this.bed && this.bed.ctx === ctx) return this.bed.gain;
+    const gain = ctx.createGain();
+    gain.gain.value = 1;
+    gain.connect(out);
+    this.bed = { ctx, gain };
+    return gain;
   }
 
   private tick(): void {
@@ -235,8 +355,9 @@ class MusicService {
     // us. Re-anchor rather than booking a burst of bars that are already late.
     if (this.nextAt < now) this.nextAt = now + 0.05;
 
+    const bed = this.bedFor(ctx, out);
     while (this.nextAt < now + LOOKAHEAD_SECONDS) {
-      scheduleBar(ctx, out, this.nextAt, this.nextBar);
+      scheduleBar(ctx, bed, this.nextAt, this.nextBar);
       this.nextBar += 1;
       this.nextAt += BAR_SECONDS;
     }

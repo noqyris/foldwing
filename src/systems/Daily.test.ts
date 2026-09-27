@@ -168,8 +168,8 @@ describe('the daily fold across a month of dates', () => {
    * Par is what the win screen measures a run against, and the path that used
    * to end the loop returned a raw candidate with no par at all — the verdict
    * silently fell back to "no par" on exactly the dates nobody had looked at.
-   * A missing par here also means the loop reached the hand-authored tutorial
-   * fallback, which over thirty dates would say the generator is broken.
+   * This does NOT catch the loop falling through to its tutorial fallback:
+   * the tutorial mazes carry a precomputed par, so that daily passes here.
    */
   it('carries a par on every date', () => {
     for (const date of SPREAD) {

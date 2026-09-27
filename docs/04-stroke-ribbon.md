@@ -3,11 +3,13 @@
 >
 > This page describes the retired **100-level set of bar obstacles** and the
 > generator that produced it. Neither still exists. The game now ships 300
-> levels — five hand-authored and 295 spanning-tree mazes built by
-> `src/core/MazeGen.ts`, which is also what the Daily Fold runs on the phone —
-> so every level count below is wrong, and any passage about wall placement,
-> interlock reservation or inert-wall stripping describes code that was
-> deleted with the bar set.
+> spanning-tree mazes built by `src/core/MazeGen.ts`, which is also what the
+> Daily Fold runs on the phone — so every level count below is wrong, and any
+> passage about wall placement, interlock reservation or inert-wall stripping
+> describes code that was deleted with the bar set. The tutorial went too: the
+> five hand-authored bar levels, LOCKED wherever they appear below, were
+> replaced in September 2026 by five small mazes from
+> `scripts/genTutorialMazes.ts`, and save schema 3 forgets clears of the old ones.
 >
 > The "Source files" line-count tables are wrong too, and that matters more
 > than it looks: the `file:line` citations throughout were counted against
@@ -121,14 +123,22 @@ export class StrokeRecorder {
 | Site | Line | Note |
 | --- | --- | --- |
 | `new StrokeRecorder(METRICS.sampleMinDist)` | 119 | `pt(2.6)` = 5.2 base px. |
-| `recorder.begin(this.startPx, this.time.now)` | 223 | Anchored on the **start dot**, not under the finger, so ink always begins where the level says. |
-| `recorder.push(cursor, this.time.now)` | 259 | `cursor` is post-thumb-offset and post-clamp (`cursorFor`, lines 284-296). |
-| `recorder.pushExact(contact, this.time.now)` | 301 | Exact wall contact point, so the ink terminates at the event. |
-| `recorder.pushExact(entry, this.time.now)` | 330 | Exact goal-entry point. |
+| `recorder.begin(this.startPx, at)` | `onPointerDown` | Anchored on the **start dot**, not under the finger, so ink always begins where the level says. `at = inputTime(pointer.downTime)`. |
+| `recorder.push(cursor, at)` | `onPointerMove` | `cursor` is post-thumb-offset and post-clamp (`cursorFor`). `at = inputTime(pointer.moveTime)`. |
+| `recorder.pushExact(contact, at)` | `fail` | Exact wall contact point, so the ink terminates at the event. |
+| `recorder.pushExact(entry, at)` | `win` | Exact goal-entry point. |
 | `times` rebased to `t0` on save | 339-347 | Stored figures start at 0 ms. `widthProfile` only reads differences, so the rebase changes nothing visually; it keeps the persisted numbers small. |
 
-Timestamps are Phaser scene time (`this.time.now`), i.e. milliseconds. The `tMs = 0`
-defaults exist only for tests — production always passes a real clock.
+Timestamps are the input EVENT's own time (`pointer.downTime` / `moveTime`,
+performance.now's timebase, which Phaser's clock shares), in milliseconds —
+through `GameScene.inputTime`, which falls back to the frame time
+(`this.time.now`) for a stamp more than 1 s away or from another origin, and
+never lets a stroke's times run backwards. Frame time alone stamped two moves
+delivered in one frame (WebKit does, and so does a phone falling behind) with
+the same instant; the ribbon read the zero gap as infinite speed and pinched the
+ink to its thinnest at each one — a line of beads, which saved figures, the share
+card and the replay inherited. The `tMs = 0` defaults exist only for tests —
+production always passes a real clock.
 
 ---
 

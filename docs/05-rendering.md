@@ -3,11 +3,13 @@
 >
 > This page describes the retired **100-level set of bar obstacles** and the
 > generator that produced it. Neither still exists. The game now ships 300
-> levels — five hand-authored and 295 spanning-tree mazes built by
-> `src/core/MazeGen.ts`, which is also what the Daily Fold runs on the phone —
-> so every level count below is wrong, and any passage about wall placement,
-> interlock reservation or inert-wall stripping describes code that was
-> deleted with the bar set.
+> spanning-tree mazes built by `src/core/MazeGen.ts`, which is also what the
+> Daily Fold runs on the phone — so every level count below is wrong, and any
+> passage about wall placement, interlock reservation or inert-wall stripping
+> describes code that was deleted with the bar set. The tutorial went too: the
+> five hand-authored bar levels, LOCKED wherever they appear below, were
+> replaced in September 2026 by five small mazes from
+> `scripts/genTutorialMazes.ts`, and save schema 3 forgets clears of the old ones.
 >
 > The "Source files" line-count tables are wrong too, and that matters more
 > than it looks: the `file:line` citations throughout were counted against
@@ -16,6 +18,13 @@
 >
 > Kept because the reasoning is still worth having. For what the game actually
 > does now, see [../README.md](../README.md).
+>
+> **1.4 (September 2026)** grew the kit — toasts with a queue and an urgent slot,
+> reward flights, count-ups, chips, tags, new glyphs, an `accent` button with a
+> badge, the medal golds and `inkCss` — and the renderer: the win's crease sweep,
+> droplets and board frame, the contact ring and wall flash on a death, a stronger
+> ghost with an ×, and the reveal as an accent hatch (below). Their signatures are in
+> [13-api-reference.md](13-api-reference.md), "The 1.4 modules".
 
 ---
 
@@ -71,10 +80,13 @@ export const PT = 2;             // Theme.ts:38
 export function pt(points: number): number  // Theme.ts:40
 ```
 
-750×1334 is a 2× iPhone-SE portrait. Phaser runs FIT + CENTER_BOTH against it,
-so game coordinates never change with the device (`Theme.ts:22-29`). Taller
-phones letterbox into the paper-coloured page background rather than
-pillarboxing and stealing the width the mirror needs.
+750×1334 is a 2× iPhone-SE portrait and the 9:16 reference. Phaser runs FIT +
+CENTER_BOTH against 750 × `viewHeight()`: the height follows the safe area
+(`adaptiveHeight`, clamped to 1334…`MAX_HEIGHT` = 1720), so a tall phone gets a
+taller world instead of letterbox bands. The playfield keeps its 702×1102 and is
+placed `boardDrop` lower (`boardInset`); chrome is anchored to the top and the
+bottom of the world (`bannerLine()` for everything that keeps clear of the
+banner). See 02-coordinate-system §1.2.
 
 `Theme.test.ts:19-34` pins `BASE_WIDTH === 750`, `BASE_HEIGHT === 1334`,
 `BASE_WIDTH / BASE_HEIGHT < 0.5626`, `PT === 2`.
@@ -155,7 +167,7 @@ export function rgba(color: number, alpha: number): string // Theme.ts:104
 | `winHoldMs` | `180` | — | |
 | `winSettleMs` | `350` | — | pinned `Theme.test.ts:131-135` |
 | `winSettleFrom` | `0.97` | — | pinned `Theme.test.ts:132` |
-| `bannerReserve` | `pt(58)` | 116 | native AdMob banner keep-out |
+| `bannerReserve` | `pt(58)` | 116 | native banner keep-out (LevelPlay 320×50 `BANNER`) |
 | `inset.top` | `pt(44)` | 88 | |
 | `inset.right` | `pt(12)` | 24 | |
 | `inset.bottom` | `pt(72)` | 144 | clears `bannerReserve` |
@@ -173,7 +185,7 @@ prose says the line should "forgive slightly". `Theme.test.ts:79-82` asserts tha
 contain `hitRadius` — migrating collision forgiveness into `InkTheme` would make
 a purchasable skin pay-to-win, and that test is the guard.
 
-**`bannerReserve` trap (`Theme.ts:186-211`).** The AdMob banner is a *native* view
+**`bannerReserve` trap (`Theme.ts:186-211`).** The ad banner is a *native* view
 pinned to the bottom of the screen; it knows nothing about the canvas. On a
 letterboxed tall phone it lands in the paper band below the canvas (harmless);
 on a 9:16 phone it covers the last stretch of canvas outright. Anything drawn in
@@ -181,6 +193,14 @@ that band is invisible, and a start dot under an ad is an accidental-click
 generator. `inset.bottom = pt(72)` (144) already exceeds `bannerReserve` (116);
 menu chrome additionally stops at `BASE_HEIGHT - METRICS.bannerReserve - pt(6)`
 (= 1206) in both grid scenes (`LevelSelectScene.ts:75`, `GalleryScene.ts:92`).
+
+The reserve is in BASE units and the banner is 50 POINTS, so the reserve covers
+it only while the canvas is drawn at about 0.44 or more: on an SE with Display
+Zoom (0.41) the banner reaches 122 base units up. Two things close that gap —
+`--fw-banner-lift` (main.ts) raises `#app` until the banner fits inside the
+reserve with `BANNER_AIR_PT` to spare, and anything laid out INTO the reserve
+asks `SafeArea.canvasBannerTop` where the banner actually begins rather than
+assuming 1230 (`MenuLayout.footLineFor`, which the 1.4 menu stack never crosses).
 
 ---
 
@@ -212,9 +232,25 @@ Five `Phaser.GameObjects.Graphics` created in the constructor
 | --- | --- | --- | --- |
 | `levelG` | 10 | 1 | axis + walls + start/goal + their reflections |
 | `revealG` | 15 | **0** | rewarded-video mirror bands |
-| `mirrorG` | 18 | 1 (opaque, by design) | reflected live stroke |
-| `strokeG` | 20 | 1 | live stroke |
+| `mirrorG` | 18 | 1 (opaque, by design) | the LIVE end of the reflected stroke (see `InkLayer` below) |
+| `strokeG` | 20 | 1 | the LIVE end of the stroke |
 | `washG` | 40 | **0** | full-screen fail wash |
+
+**`InkLayer` — bake the settled ink, redraw only the pen end.** A Graphics is
+not a picture: Phaser replays and re-triangulates its whole command list every
+frame, so a long line cost more every frame (about 30 fps near the end of level
+300). Each half — stroke and mirror — therefore has an `InkLayer`: the part of
+the ribbon that can no longer change (`Ribbon.settledPoints`,
+`StrokeRecorder.renderTailReach`) is painted once into a RenderTexture just
+below the layer's Graphics, and only the last few samples are redrawn per move
+(`ribbonSlice` splits the ribbon so every quad and disc is drawn exactly once).
+The texture is 2× supersampled (render textures get no multisampling), holds the
+ink in white and is **tinted** — which is how the fail flash turns the baked line
+red without repainting it. It is created on the first bake, freed on a win. The
+Canvas renderer cannot tint, so there nothing is baked and the old live path
+runs. Discs and rounded wall corners are polygons with only as many sides as
+their radius needs (`CURVE_TOLERANCE`, within 0.03 px of the true circle), not
+Phaser's fixed 100 segments.
 
 HUD objects in `GameScene` sit at depth 50 (`GameScene.ts:598`, `GameScene.ts:610`)
 — above the wash.
@@ -290,28 +326,37 @@ dash cannot overhang the playfield.
 `METRICS.goalRingWidth`, plus a centre dot `fillCircle(..., pt(2.5))` at
 `alpha * 0.55`.
 
-**`drawStroke` (`:170-189`)** — clears both `strokeG` and `mirrorG`, forces
-`mirrorG` opaque, returns early on `raw.length === 0`, then paints the mirror
-**before** the ink so the player's line is always on top. `color` overrides
-`t.ink`; the mirror is `veil(ink, t)` of whatever colour was passed — which is
-how the fail flash tints both halves.
+**`drawStroke`** — hands each half's `InkLayer` the drawn path and how many
+leading points are settled; the layer bakes the newly settled part and repaints
+its live end. The mirror is painted **before** the ink so the player's line is
+always on top. `color` overrides `t.ink`; the mirror is `veil(ink, t)` of
+whatever colour was passed — which is how the fail flash tints both halves
+(the baked textures by tint, the live ends by repaint).
 
-**`flashFail` (`:203-219`)** — re-draws the stroke in `t.fail`, fills
+**`flashFail`** — re-draws the stroke in `t.fail`, fills
 `washG` over the entire logical canvas `(0, 0, BASE_WIDTH, BASE_HEIGHT)` at
 alpha `0.1`, kills existing tweens on it, and tweens alpha to 0 over
-`METRICS.failFlashMs` (400) with `Quad.easeOut`. No modal, no dismiss tap — the
-retry loop is the product (`:198-202`).
+`METRICS.failFlashMs` (400) with `Quad.easeOut`. The page behind the canvas is
+tinted with the wash on every frame of that tween (`UI.dimPage` in `t.fail`),
+so the letterbox — or the wide side paper on an iPhone Duo — flashes with the
+board instead of framing a hard-edged red column; released when the tween ends
+and in `destroy`. No modal, no dismiss tap — the retry loop is the product.
 
-**`showReveal` (`:230-259`)** — the rewarded-video reward. Paints the *mirrored*
-wall bands onto the left half in `t.fail` at alpha **0.16**, then a fixed
+**`showReveal`** — the reveal. Paints the *mirrored* wall bands onto the left half.
+Until 1.4 it used `t.fail` at alpha 0.6 (`REVEAL_ALPHA`: 2.4:1 against the paper —
+0.16 had been 1.23:1 and easy to miss), which read as a second failure; since 1.4 it
+is an **accent hatch** — a 0.25 accent tint plus 45° lines (pt(1.4) wide, pt(4.2)
+apart) at 0.6, clipped to the bands by ONE geometry mask built as a single path, so
+the Canvas renderer clips every band and not only the last. Then a fixed
 tween chain: fade in 220 ms `Quad.easeOut` → on complete, fade out after
 `delay: durationMs` over 420 ms `Quad.easeIn` → `g.clear()`. `durationMs` comes
 from `monetization.reveals.durationMs` (`GameScene.ts:424`). Note the reward is
 *information*, not the answer — the player still has to draw it (`:223-229`).
 
-**`presentWin` (`:274-293`)** — clears any previous win layer and the live
-stroke, builds the closed figure via `buildFigure`, bails silently if that
-returns `null`, sets depth 30 and scale `METRICS.winSettleFrom` (0.97), then
+**`presentWin`** — clears any previous win layer and the live
+stroke (freeing both `InkLayer` textures), builds the closed figure via
+`buildFigure`, bails silently if that returns `null`, sets depth 30 and scale
+`METRICS.winSettleFrom` (0.97), then
 tweens scale → 1 with `delay: METRICS.winHoldMs` (180),
 `duration: METRICS.winSettleMs` (350), `Cubic.easeOut`.
 
@@ -356,8 +401,12 @@ container is placed at the figure's centre `(cx, cy)` and every point is rebased
 to `p - centre` (`:330-332`), so the caller can scale/rotate it about its own
 middle — that is why `presentWin` can tween `scale` and have it settle in place.
 
-Child order inside the container (`:358`): `[fill, mirrorG, inkG]` — silhouette
-fill at `t.winFillAlpha` (0.11), then the veiled mirror, then the ink.
+The container holds **one RenderTexture**, not Graphics: the fill (at
+`t.winFillAlpha`, 0.11), the veiled mirror and the ink — in that order — are
+painted into it once (supersampled like `InkLayer`) and the Graphics destroyed.
+A figure held on screen as Graphics was re-triangulated every frame (about
+26 fps on a late level); as a texture it is a single quad. The tween, depth and
+API are unchanged.
 
 It is shared by the win moment and (indirectly) the gallery so a saved figure is
 rendered by exactly the code that drew it when it was earned (`:312-318`).
@@ -379,7 +428,7 @@ Fits the figure into `box` with a **uniform** scale
 (`Math.min(box.w / bounds.w, box.h / bounds.h)`, `:382`) and centres it. Bails on
 `!bounds || bounds.w <= 0 || bounds.h <= 0`.
 
-Two deliberate differences from `buildFigure`:
+Three deliberate differences from `buildFigure`:
 
 1. Nib is `Math.max(1.5, pt(t.strokePt) * scale)` (`:389`) — the floor keeps a
    thumbnail stroke visible at any card size.
@@ -388,9 +437,13 @@ Two deliberate differences from `buildFigure`:
    (`:399`) — the difference is the extra per-command alpha on top, which the
    live stroke never uses. The beading that motivates `veil` is sub-pixel at
    thumbnail size, and sharing **one** Graphics across the whole grid is worth
-   far more than the artefact costs (`:411-418`). Only caller:
-   `GalleryScene.ts:209`, into the card's own Graphics before it is baked into
-   the atlas.
+   far more than the artefact costs. Only caller: `GalleryScene`, into the
+   card's own Graphics before it is baked into the atlas.
+3. The line is smoothed at playfield scale — the same geometry the share card
+   and `scripts/screenshots/capture.mjs` check — and then thinned to what the
+   card can show (`Ribbon.thinPath`: chords at most 2 card px long, within
+   0.1 card px of the line). Widths come from every sample first, so the ink's
+   weight is unchanged; a card costs about 2–4 ms instead of 22–38.
 
 ---
 
@@ -471,9 +524,20 @@ all**.
 export function tappable(
   container: Phaser.GameObjects.Container,
   w: number,
-  h: number
-): void                                                        // UI.ts:27
+  h: number,
+  floor = false,                    // keep the TAP area >= minTap (44pt on the glass)
+  cap = Number.POSITIVE_INFINITY    // ...but never taller than the room the layout left
+): () => number                     // the tap height as it is now
 ```
+
+With `floor`, the area is re-fitted on every Scale RESIZE, since the floor is in
+points and follows the canvas scale. `cap` (`button`'s `maxTap`) is where a
+caller's spacing stops it: the Menu foot uses `stackFoot` (`HitArea.ts`), the
+Settings rows `rowH - 1`, and the Menu rebuilds itself once the scale settles
+at a new floor (`MenuScene.watchScale`) — on the next step, without settling,
+when the banner's line has moved up over the built stack. Levels and Gallery
+cut their scroll window to the new `listBottom` on the resize itself
+(`UI.holdListWindow`) and rebuild once the height holds (`UI.watchHeight`).
 
 The only sanctioned way to make a centre-drawn container interactive. Wraps
 `centredHitArea(w, h)` in a `Phaser.Geom.Rectangle` with
@@ -796,8 +860,9 @@ The four pinned cases are the real shipped geometry (`HitArea.test.ts:12-17`):
 { name: 'back chevron',   cx: 80,  cy: 104,  w: 104, h: 88  },
 ```
 
-The two menu cases reproduce **exactly** from `MenuScene.ts:77-106` in the
-not-selling branch: `cursorY` starts at `pt(355) = 710`, `tallRow = pt(66) = 132`,
+The two menu cases reproduced **exactly** the 1.3 `MenuScene` in its not-selling
+branch — a layout 1.4 replaced with `MenuLayout`, so they now pin the correction on
+historical geometry rather than on any live button: `cursorY` starts at `pt(355) = 710`, `tallRow = pt(66) = 132`,
 `row = pt(54) = 108`, `rowGap = pt(11) = 22`, so `place()` yields
 `710 + 66 = 776`, then `864 + 54 = 918`, then `994 + 54 = 1048` — the last being
 the Gallery centre the fourth test uses. Sizes come from `COLUMN = 638`.
@@ -1052,6 +1117,15 @@ Cards are then plain Images: `this.add.image(x, y, atlas, String(i))`
 (`LevelSelectScene.ts:95`, `GalleryScene.ts:109`). All 100 share one texture and
 batch into a single draw call, and the 100 `Text` objects vanish into the bake
 along with the canvas each was allocating (`LevelSelectScene.ts:169-173`).
+
+**The Gallery bakes progressively.** Baking every card in `create()` froze the
+screen for 0.3–3 s (4.6 s in WebKit at 120 figures). Its cards now start as one
+shared blank card texture; an `UPDATE` handler bakes into `DynamicTexture`
+atlases within an 8 ms budget per frame (`BAKE_BUDGET_MS`, at least one card a
+frame) — cards on screen first, then the rest top-down — and each image swaps to
+its frame as it lands. Both axes of every atlas are capped at 2048 and the cards
+spill into as many atlases as they need. The atlases are still freed when the
+player leaves, so nothing is held between visits.
 
 Derived atlas size for the shipped level grid (arithmetic from
 `LevelSelectScene.ts:32-33`, `:45`, `:77-79`, `:178-184`):

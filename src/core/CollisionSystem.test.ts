@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { CollisionSystem } from './CollisionSystem';
-import { lerpPoint, vec2, type Rect } from './Geometry';
+import { lerpPoint, mirrorPoint, segRectEntryT, vec2, type Rect, type Vec2 } from './Geometry';
+import { Playfield } from './Playfield';
+import { LEVELS } from '../data/levels';
+import { BASE_HEIGHT, BASE_WIDTH, METRICS } from '../render/Theme';
+
+const pf = new Playfield(BASE_WIDTH, BASE_HEIGHT, METRICS.inset);
 
 const AXIS = 500;
 
@@ -130,5 +135,106 @@ describe('CollisionSystem', () => {
         expect(c.firstHitT(a, b) !== null).toBe(c.blocks(a, b));
       }
     });
+  });
+});
+
+/*
+ * The wall index is reported for the fail feedback — the struck wall flashes —
+ * and must not change a single death. Same fixture: index 0 is LEFT_WALL,
+ * index 1 is RIGHT_WALL.
+ */
+describe('firstHit wall index', () => {
+  it('names the wall the drawn stroke struck', () => {
+    const hit = system().firstHit(vec2(100, 200), vec2(100, 400));
+    expect(hit).toEqual({ t: expect.closeTo(0.5, 12), mirror: false, wall: 0 });
+  });
+
+  it('names the REAL wall a mirror death ran into, on the far half', () => {
+    const hit = system().firstHit(vec2(400, 600), vec2(400, 800));
+    expect(hit).toEqual({ t: expect.closeTo(0.5, 12), mirror: true, wall: 1 });
+  });
+
+  it('names the earlier wall when one segment reaches both', () => {
+    // Own side struck at y=300 (wall 0) before the mirror reaches wall 1.
+    expect(system().firstHit(vec2(400, 0), vec2(400, 1200))?.wall).toBe(0);
+    // Upward, the mirror meets wall 1 first.
+    const up = system().firstHit(vec2(400, 1200), vec2(400, 0));
+    expect(up).toMatchObject({ mirror: true, wall: 1 });
+  });
+
+  it('keeps the first-listed wall on a tie', () => {
+    const twin: Rect = { ...LEFT_WALL };
+    const c = new CollisionSystem([LEFT_WALL, twin], 0, AXIS);
+    expect(c.firstHit(vec2(100, 200), vec2(100, 400))?.wall).toBe(0);
+    const swapped = new CollisionSystem([RIGHT_WALL, LEFT_WALL], 0, AXIS);
+    expect(swapped.firstHit(vec2(100, 200), vec2(100, 400))?.wall).toBe(1);
+  });
+
+  /*
+   * Checked against the loop as it stood before the index was added, copied
+   * here verbatim — not against firstHitT, which is firstHit under another
+   * name and would agree with any change. On real mazes, whose wall rects
+   * overlap at every joint, so a segment entering at a joint, or starting
+   * inside one, strikes two rects at the same t: the tie-break is exercised,
+   * not assumed.
+   */
+  it('changes nothing about which segments die, or where, on real mazes', () => {
+    const before = (
+      walls: readonly Rect[],
+      r: number,
+      a: Vec2,
+      b: Vec2
+    ): { t: number; mirror: boolean } | null => {
+      const ma = mirrorPoint(a, pf.axisX);
+      const mb = mirrorPoint(b, pf.axisX);
+      let earliest: { t: number; mirror: boolean } | null = null;
+      for (const wall of walls) {
+        const own = segRectEntryT(a, b, wall, r);
+        if (own !== null && (earliest === null || own < earliest.t)) {
+          earliest = { t: own, mirror: false };
+        }
+        const reflected = segRectEntryT(ma, mb, wall, r);
+        if (reflected !== null && (earliest === null || reflected < earliest.t)) {
+          earliest = { t: reflected, mirror: true };
+        }
+      }
+      return earliest;
+    };
+
+    let s = 777 >>> 0;
+    const rand = (): number => {
+      s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+      return s / 4294967296;
+    };
+    const r = METRICS.hitRadius;
+    let hits = 0;
+    let ties = 0;
+    for (const level of [LEVELS[0], LEVELS[4], LEVELS[37], LEVELS[150], LEVELS[299]]) {
+      const walls = level.walls.map((w) => pf.toScreenRect(w));
+      const c = new CollisionSystem(walls, r, pf.axisX);
+      for (let i = 0; i < 1500; i++) {
+        // Short strokes, the length of a few frames of a fast flick: most
+        // start clear and end in, or across, a joint.
+        const a = vec2(pf.x + rand() * pf.w, pf.y + rand() * pf.h);
+        const b = vec2(a.x + (rand() - 0.5) * 160, a.y + (rand() - 0.5) * 160);
+        const hit = c.firstHit(a, b);
+        const ref = before(walls, r, a, b);
+        expect(hit && { t: hit.t, mirror: hit.mirror }).toEqual(ref);
+        if (!hit) continue;
+        hits++;
+        // The wall named is the first, in list order and own side before
+        // mirror, that is struck at exactly that t — the rule the old loop
+        // applied without saying which wall it was.
+        const struck: number[] = [];
+        walls.forEach((w, j) => {
+          const one = before([w], r, a, b);
+          if (one?.t === hit.t && one.mirror === hit.mirror) struck.push(j);
+        });
+        expect(struck[0]).toBe(hit.wall);
+        if (struck.length > 1) ties++;
+      }
+    }
+    expect(hits).toBeGreaterThan(1000);
+    expect(ties).toBeGreaterThan(50);
   });
 });
