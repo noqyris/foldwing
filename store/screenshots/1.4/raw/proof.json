@@ -1,0 +1,83 @@
+{
+  "server": "http://localhost:5200/?safe=62,0,34,0",
+  "marker": "ADS:off",
+  "clock": "2026-09-23T12:00:00+02:00",
+  "view": {
+    "width": 402,
+    "height": 874,
+    "dpr": 3,
+    "safe": "62,0,34,0"
+  },
+  "notes": [
+    "journey l41: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4",
+    "journey l42: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4",
+    "journey l43: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4",
+    "journey l44: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4",
+    "journey l45: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4",
+    "journey l46: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4",
+    "journey l47: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4",
+    "journey l48: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4",
+    "journey l49: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4",
+    "journey l50: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4",
+    "journey l51: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4",
+    "journey l52: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4",
+    "journey l53: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4",
+    "journey l54: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4",
+    "journey l55: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4",
+    "gallery l25: plan r=12.2 (hitRadius 5.2), gap 14, wobble 2.2",
+    "gallery l47: plan r=12.2 (hitRadius 5.2), gap 14, wobble 2",
+    "gallery l72: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.8",
+    "gallery l94: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.6",
+    "gallery l119: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4",
+    "gallery l141: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4",
+    "gallery l164: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.2",
+    "gallery l187: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.2",
+    "gallery l59: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.8",
+    "gallery l108: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4",
+    "gallery l153: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.2",
+    "gallery l38: plan r=12.2 (hitRadius 5.2), gap 14, wobble 2",
+    "share l141: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4",
+    "missions dealt for 2026-09-23: daily, wins3, medal"
+  ],
+  "frames": {
+    "01": [
+      "route l48 \"First span\": planned at r=12.2 (hitRadius 5.2 +7.0), gap 14, step 20, 68 moves; proved event by event at r=5.2, ink clear at r=1",
+      "drove 41/68 moves, paced at 238 base px/s (6.4 s planned), button held; recorded 41 samples, worst drift from the proof 0.0000; phase drawing; the game timed the stroke at 3.9 s (wall 3.9 s, loop at 85 fps)"
+    ],
+    "02": [
+      "route l48 \"First span\": planned at r=12.2 (hitRadius 5.2 +7.0), gap 14, step 20, 68 moves; proved event by event at r=5.2, ink clear at r=1",
+      "crash: the route's first 26 moves, then a turn at -110°; simulated: the reflection hits wall 20 at (642, 696), own line clear by > hitRadius+4",
+      "paced at 238 base px/s; the game timed the stroke at 2.9 s (wall 2.9 s, loop at 85 fps)",
+      "02a-level48-mirror-crash: frozen 271 ms (game time) after the death; the game says phase failed, attempt 1, deaths 1 (mirror 1), arc arrow up (labelled deaths so far 1), reveals 3",
+      "02b-level48-mirror-crash-ghost: frozen 643 ms (game time) after the death; the game says phase idle, attempt 1, deaths 1 (mirror 1), arc arrow up (labelled deaths so far 1), reveals 3"
+    ],
+    "03": [
+      "route l48 \"First span\": planned at r=12.2 (hitRadius 5.2 +7.0), gap 14, step 20, 68 moves; proved event by event at r=5.2, ink clear at r=1",
+      "line/par 0.974 (★★ at 1.25, ★★★ at 1.10)",
+      "paced at 238 base px/s (6.4 s planned)",
+      "phase won; recorded 68 samples, worst drift 0.0000; the game scores line/par 0.979, stars 3; reveals 4; the game timed the stroke at 6.4 s (wall 6.4 s, loop at 85 fps)"
+    ],
+    "04": [
+      "route d2026-09-23 \"Daily fold\": planned at r=12.2 (hitRadius 5.2 +7.0), gap 14, step 20, 100 moves; proved event by event at r=5.2, ink clear at r=1",
+      "paced at 266 base px/s (8.6 s planned)",
+      "phase won; recorded 100 samples, worst drift 0.0000; streak 6 -> 7; reveals 6; the game timed the stroke at 8.6 s (wall 8.6 s, loop at 86 fps)"
+    ],
+    "05": [
+      "55 folds made, 134 stars, 15 proved figures on the path; the path dragged 50 pt by hand; reveals 4"
+    ],
+    "06": [
+      "renderShareCard(l141, 13200 ms) -> 06-sharecard.png"
+    ],
+    "07": [
+      "route l48 \"First span\": planned at r=12.2 (hitRadius 5.2 +7.0), gap 14, step 20, 68 moves; proved event by event at r=5.2, ink clear at r=1",
+      "paced at 238 base px/s; the game timed the stroke at 2.9 s (wall 2.9 s, loop at 85 fps)",
+      "the frame-2 crash, taken for real (deaths 1, mirror 1); its arc arrow left to fade; then a tap on the Reveal pill: the folded walls up, reveals 3 -> 2, adsRemoved false"
+    ],
+    "08": [
+      "12 proved figures seeded"
+    ],
+    "09": [
+      "missions for 2026-09-23 as the game deals them: daily, wins3, medal; progress 1/2/0, paid true/false/false; the Menu's strip (09m-menu), then a tap on it: sheet open true (09-missions); reveals 3"
+    ]
+  }
+}

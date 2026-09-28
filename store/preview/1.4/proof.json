@@ -1,0 +1,269 @@
+{
+  "takes": {
+    "a": {
+      "lines": [
+        "route l48 \"First span\": planned at r=12.2 (hitRadius 5.2 +7.0), gap 14, step 10, 134 moves, 1323 base px = 0.987x par (3 stars); proved event by event at r=5.2, ink clear at r=1",
+        "crash: the route's first 67 of 134 moves, then a turn at -150° for 71 px; simulated: the reflection hits wall 15 at (562, 603), own line clear by > hitRadius+4",
+        "attempt 1 paced at 172 base px/s on average (88 pt/s) over 4.20 s; the turn at 3.82 s",
+        "attempt 2 paced at 349 base px/s on average (179 pt/s) over 3.80 s",
+        "attempt 1: 76 samples, the proof's 75 + the end, worst drift 0.0000; the game timed the stroke at 4.21 s (wall 4.23 s, loop at 87 fps, worst lateness 0 ms)",
+        "the game says: phase failed, attempt 1, deaths 1 (mirror 1), arrow labelled \"your reflection\" (teachMirrorN 1), reveals 3, adsRemoved false",
+        "a tap on the Reveal pill at (340, 217) pt: reveals 3 -> 2, adsRemoved false",
+        "attempt 2: 134 samples, the proof's 133 + the end, worst drift 0.0000; the game timed the stroke at 3.81 s (wall 3.82 s, loop at 85 fps, worst lateness 0 ms); the game scores line/par 0.987, 3 stars",
+        "the result card: {\"stars\":3,\"sub\":\"3.8 s · try 2\",\"chips\":[],\"daily\":null}",
+        "recorded 756 frames over 18.0 s (42 fps, longest gap in motion 83 ms)"
+      ],
+      "try": 2
+    },
+    "b": {
+      "lines": [
+        "a tap on the Menu's Daily card, on its Play, at (338, 794) pt",
+        "route d2026-09-27 \"Daily fold\": planned at r=12.2 (hitRadius 5.2 +7.0), gap 14, step 20, 98 moves, 1895 base px = 0.995x par (3 stars); proved event by event at r=5.2, ink clear at r=1",
+        "the Daily paced at 529 base px/s on average (271 pt/s) over 3.60 s",
+        "98 samples, the proof's 97 + the end, worst drift 0.0000; the game timed the stroke at 3.61 s (wall 3.63 s, loop at 85 fps, worst lateness 5 ms); streak 6 -> 7; reveals 6",
+        "the result card: {\"stars\":0,\"sub\":\"7-day streak · 0:04 · first try\",\"chips\":[\"+2 reveals\",\"+1 bookmark\",\"mission done · +1 reveal\"],\"daily\":{\"streak\":{\"from\":6,\"to\":7},\"title\":\"A week of folds\"}}",
+        "recorded 419 frames over 9.9 s (42 fps, longest gap in motion 40 ms)"
+      ],
+      "try": 1
+    },
+    "c": {
+      "lines": [
+        "17 proved figures seeded (folds 41-57)",
+        "a tap on the Levels tile at (124, 871) pt",
+        "a drag of 345 pt down the journey over 1500 ms, let go moving; the list rests at 0; recorded 238 frames over 5.6 s (42 fps, longest gap in motion 24 ms)"
+      ],
+      "try": 1
+    }
+  },
+  "server": "http://localhost:5200/",
+  "marker": "ADS:off",
+  "clock": "2026-09-27T12:00:00+02:00",
+  "frame": {
+    "page": "430x932 pt @2",
+    "safe": {
+      "top": 194,
+      "right": 23,
+      "bottom": 12,
+      "left": 23
+    },
+    "band": 334,
+    "fade": 60
+  },
+  "notes": [
+    "figure l41: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.028x par = 3 stars",
+    "figure l42: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.013x par = 3 stars",
+    "figure l43: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.023x par = 3 stars",
+    "figure l44: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.021x par = 3 stars",
+    "figure l45: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.020x par = 3 stars",
+    "figure l46: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.033x par = 3 stars",
+    "figure l47: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.001x par = 3 stars",
+    "figure l48: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.008x par = 3 stars",
+    "figure l49: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.046x par = 3 stars",
+    "figure l50: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.039x par = 3 stars",
+    "figure l51: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.007x par = 3 stars",
+    "figure l52: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.032x par = 3 stars",
+    "figure l53: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.021x par = 3 stars",
+    "figure l54: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 0.995x par = 3 stars",
+    "figure l55: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.014x par = 3 stars",
+    "figure l56: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.001x par = 3 stars",
+    "figure l57: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.038x par = 3 stars",
+    "figure l41: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.028x par = 3 stars",
+    "figure l42: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.013x par = 3 stars",
+    "figure l43: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.023x par = 3 stars",
+    "figure l44: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.021x par = 3 stars",
+    "figure l45: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.020x par = 3 stars",
+    "figure l46: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.033x par = 3 stars",
+    "figure l47: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.001x par = 3 stars",
+    "figure l48: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.008x par = 3 stars",
+    "figure l49: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.046x par = 3 stars",
+    "figure l50: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.039x par = 3 stars",
+    "figure l51: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.007x par = 3 stars",
+    "figure l52: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.032x par = 3 stars",
+    "figure l53: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.021x par = 3 stars",
+    "figure l54: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 0.995x par = 3 stars",
+    "figure l55: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.014x par = 3 stars",
+    "figure l56: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.001x par = 3 stars",
+    "figure l57: plan r=12.2 (hitRadius 5.2), gap 14, wobble 1.4, line 1.038x par = 3 stars",
+    "journey missions dealt for 2026-09-27: daily, wins3, best"
+  ],
+  "cut": {
+    "shots": [
+      {
+        "take": "a",
+        "out": 0,
+        "len": 2.52,
+        "src": 2.740035057067871,
+        "speed": 1
+      },
+      {
+        "take": "a",
+        "out": 2.52,
+        "len": 0.8,
+        "src": 5.260035037994385,
+        "speed": 0.5
+      },
+      {
+        "take": "a",
+        "out": 3.3200000000000003,
+        "len": 11.296699810028077,
+        "src": 5.660034894943237,
+        "speed": 1
+      },
+      {
+        "take": "b",
+        "out": 14.616699810028077,
+        "len": 0.8,
+        "src": 0.7938539981842041,
+        "speed": 1
+      },
+      {
+        "take": "b",
+        "out": 15.416699810028078,
+        "len": 1.8591001510620118,
+        "src": 2.5933539867401123,
+        "speed": 2
+      },
+      {
+        "take": "b",
+        "out": 17.27579996109009,
+        "len": 2.4,
+        "src": 6.311554193496704,
+        "speed": 1
+      },
+      {
+        "take": "c",
+        "out": 19.67579996109009,
+        "len": 3.820700168609619,
+        "src": 1.0681500434875488,
+        "speed": 1
+      }
+    ],
+    "captions": [
+      {
+        "lines": [
+          "One line.",
+          "Two mazes."
+        ],
+        "from": 0,
+        "to": 2.5
+      },
+      {
+        "lines": [
+          "Dodge walls",
+          "you can’t see"
+        ],
+        "from": 2.5,
+        "to": 4.8
+      },
+      {
+        "lines": [
+          "Stuck? See",
+          "both mazes."
+        ],
+        "from": 4.8,
+        "to": 7.4488001060485844
+      },
+      {
+        "lines": [
+          "Mind your",
+          "reflection."
+        ],
+        "from": 7.4488001060485844,
+        "to": 11.316699810028076
+      },
+      {
+        "lines": [
+          "Clear both.",
+          "Earn ★★★"
+        ],
+        "from": 11.316699810028076,
+        "to": 14.616699810028077
+      },
+      {
+        "lines": [
+          "A daily maze",
+          "for everyone."
+        ],
+        "from": 14.616699810028077,
+        "to": 19.67579996109009
+      },
+      {
+        "lines": [
+          "300 mazes.",
+          "No lives."
+        ],
+        "from": 19.67579996109009,
+        "to": 23.496500129699708
+      }
+    ],
+    "anchors": {
+      "impactAt": 2.7199998092651367,
+      "revealTapAt": 5.0875998210906985,
+      "solveAt": 7.498800106048584,
+      "winAt": 11.316699810028076,
+      "dailyTapAt": 15.116699810028077,
+      "dailyWinAt": 17.27579996109009,
+      "levelsAt": 19.67579996109009,
+      "end": 23.496500129699708
+    },
+    "taps": [
+      {
+        "take": "a",
+        "t": 1790522763.9362998,
+        "x": 340,
+        "y": 217,
+        "out": 5.0875998210906985,
+        "outUntil": null,
+        "moves": 0
+      },
+      {
+        "take": "b",
+        "t": 1790522857.8545,
+        "x": 338,
+        "y": 794,
+        "out": 15.116699810028077,
+        "outUntil": null,
+        "moves": 0
+      },
+      {
+        "take": "c",
+        "t": 1790523024.6229002,
+        "x": 300,
+        "y": 500,
+        "until": 1790523026.1764002,
+        "out": 20.443000192642213,
+        "outUntil": 21.996500129699708,
+        "moves": 94
+      }
+    ],
+    "sounds": {
+      "note": 40,
+      "thud": 1,
+      "tear": 1,
+      "tock": 1,
+      "celebrate": 2,
+      "star": 3,
+      "streakUp": 1,
+      "pop": 4,
+      "pen": 3
+    },
+    "facts": {
+      "size": "886x1920",
+      "fps": "30/1",
+      "codec": "h264 High level 4",
+      "pix_fmt": "yuv420p",
+      "video_kbps": 10954,
+      "audio": "aac 2 ch 48000 Hz 256 kbps",
+      "duration": 23.51,
+      "megabytes": 32.958387
+    },
+    "checks": [
+      "/private/tmp/claude-501/-Users-djosubotic-Desktop-Noqyris-repository-games-foldwing/b8b0aa78-2ccc-460b-a3c5-d0564bf3156e/scratchpad/pv14/work/check/t00.png",
+      "/private/tmp/claude-501/-Users-djosubotic-Desktop-Noqyris-repository-games-foldwing/b8b0aa78-2ccc-460b-a3c5-d0564bf3156e/scratchpad/pv14/work/check/t02.png",
+      "/private/tmp/claude-501/-Users-djosubotic-Desktop-Noqyris-repository-games-foldwing/b8b0aa78-2ccc-460b-a3c5-d0564bf3156e/scratchpad/pv14/work/check/t05.png",
+      "/private/tmp/claude-501/-Users-djosubotic-Desktop-Noqyris-repository-games-foldwing/b8b0aa78-2ccc-460b-a3c5-d0564bf3156e/scratchpad/pv14/work/check/t10.png",
+      "/private/tmp/claude-501/-Users-djosubotic-Desktop-Noqyris-repository-games-foldwing/b8b0aa78-2ccc-460b-a3c5-d0564bf3156e/scratchpad/pv14/work/check/t15.png",
+      "/private/tmp/claude-501/-Users-djosubotic-Desktop-Noqyris-repository-games-foldwing/b8b0aa78-2ccc-460b-a3c5-d0564bf3156e/scratchpad/pv14/work/check/t20.png"
+    ]
+  }
+}
